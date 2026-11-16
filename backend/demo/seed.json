@@ -1,0 +1,532 @@
+{
+  "$comment": "Offline demo data for npm run demo. Fictional. Times are relative (days ago) so the demo always looks current. Point DEMO_SEED_FILE at your own copy to change it.",
+  "donors": [
+    {
+      "id": 1,
+      "name": "Amazon Future Engineer"
+    },
+    {
+      "id": 2,
+      "name": "Infosys Foundation"
+    },
+    {
+      "id": 3,
+      "name": "Wipro Cares"
+    },
+    {
+      "id": 4,
+      "name": "Tata Trusts"
+    }
+  ],
+  "ngos": [
+    {
+      "id": 1,
+      "name": "Navgurukul Pune"
+    },
+    {
+      "id": 2,
+      "name": "Navgurukul Dharamshala"
+    },
+    {
+      "id": 3,
+      "name": "Pratham Delhi"
+    },
+    {
+      "id": 4,
+      "name": "Teach for India"
+    }
+  ],
+  "devices": [
+    {
+      "id": 1,
+      "serial_number": "WIN-00330-54292-93175-AAOEM",
+      "model": "HP ProBook 440 G8",
+      "username": "student01",
+      "location": "Pune",
+      "ngo_id": 1,
+      "donor_id": 1
+    },
+    {
+      "id": 2,
+      "serial_number": "PF2X91AB",
+      "model": "Lenovo ThinkPad E14",
+      "username": "student02",
+      "location": "Dharamshala",
+      "ngo_id": 2,
+      "donor_id": 1
+    },
+    {
+      "id": 3,
+      "serial_number": "5CD1234XYZ",
+      "model": "HP 250 G8",
+      "username": "student04",
+      "location": "Delhi",
+      "ngo_id": 3,
+      "donor_id": 2
+    },
+    {
+      "id": 4,
+      "serial_number": "PF2X91AC",
+      "model": "Lenovo ThinkPad E14",
+      "username": "student03",
+      "location": "Dharamshala",
+      "ngo_id": 2,
+      "donor_id": 1
+    },
+    {
+      "id": 5,
+      "serial_number": "5CD9999QQQ",
+      "model": "Dell Latitude 3420",
+      "username": "student05",
+      "location": "Mumbai",
+      "ngo_id": 4,
+      "donor_id": 2
+    }
+  ],
+  "softwares": [
+    {
+      "id": 1,
+      "software_name": "Google Chrome",
+      "version": "131.0.6778.86",
+      "description": "Standard web browser for digital learning and student research",
+      "is_active": true,
+      "source_type": "winget",
+      "winget_id": "Google.Chrome",
+      "file_name": null,
+      "storage_key": null,
+      "file_url": null,
+      "file_size_bytes": null,
+      "sha256_checksum": null,
+      "checksum_verified_at": null,
+      "installer_type": "Custom",
+      "silent_args": "--silent --accept-source-agreements",
+      "execution_context": "SYSTEM",
+      "is_portable": false,
+      "target_install_path": null,
+      "create_desktop_shortcut": true,
+      "timeout_minutes": 10,
+      "is_global": true,
+      "detection_type": "exit_code_zero",
+      "detection_path": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+      "assigned_donors": [],
+      "assigned_ngos": [],
+      "test_device_serials": [],
+      "created_days_ago": 30,
+      "updated_days_ago": 5,
+      "demo_stats": {
+        "devices_targeted": 1288,
+        "devices_succeeded": 1210,
+        "devices_failed": 40,
+        "total_attempts": 1290,
+        "last_attempt_days_ago": 0.01
+      },
+      "install_priority": 0,
+      "success_exit_codes": null,
+      "max_retry_attempts": null,
+      "min_rms_version": null
+    },
+    {
+      "id": 2,
+      "software_name": "Amazon Future Engineer",
+      "version": "2.4.1",
+      "description": "AFE Coding and Learning environment with Python runtime",
+      "is_active": true,
+      "source_type": "rms-repository",
+      "winget_id": "AFE-Setup-v2.4.1.exe",
+      "file_name": "AFE-Setup-v2.4.1.exe",
+      "storage_key": "softwares/AFE-Setup-v2.4.1.exe",
+      "file_url": "https://rms.example.org/softwares/AFE-Setup-v2.4.1.exe",
+      "file_size_bytes": 184549376,
+      "sha256_checksum": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "checksum_verified_at": "2026-11-16T11:55:02.363Z",
+      "installer_type": "InnoSetup",
+      "silent_args": "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-",
+      "execution_context": "LOGGED_IN_USER",
+      "is_portable": false,
+      "target_install_path": null,
+      "create_desktop_shortcut": true,
+      "timeout_minutes": 15,
+      "is_global": false,
+      "detection_type": "file_exists",
+      "detection_path": "C:\\Program Files\\Amazon Future Engineer\\Amazon Future Engineer.exe",
+      "assigned_donors": [
+        {
+          "id": 1,
+          "name": "Amazon"
+        }
+      ],
+      "assigned_ngos": [
+        {
+          "id": 1,
+          "name": "Navgurukul Pune"
+        },
+        {
+          "id": 2,
+          "name": "Navgurukul Dharamshala"
+        }
+      ],
+      "test_device_serials": [
+        "WIN-00330-54292-93175-AAOEM"
+      ],
+      "created_days_ago": 14,
+      "updated_days_ago": 2,
+      "demo_stats": {
+        "devices_targeted": 494,
+        "devices_succeeded": 432,
+        "devices_failed": 48,
+        "total_attempts": 512,
+        "last_attempt_days_ago": 0.03
+      },
+      "install_priority": 100,
+      "success_exit_codes": null,
+      "max_retry_attempts": null,
+      "min_rms_version": null
+    },
+    {
+      "id": 3,
+      "software_name": "AI Tutor",
+      "version": "1.2.0",
+      "description": "Offline AI tutoring interactive platform",
+      "is_active": true,
+      "source_type": "rms-repository",
+      "winget_id": "AITutor-Setup-1.2.0.exe",
+      "file_name": "AITutor-Setup-1.2.0.exe",
+      "storage_key": "softwares/AITutor-Setup-1.2.0.exe",
+      "file_url": "https://rms.example.org/softwares/AITutor-Setup-1.2.0.exe",
+      "file_size_bytes": 312410112,
+      "sha256_checksum": "a8b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1",
+      "checksum_verified_at": "2026-11-16T11:55:02.363Z",
+      "installer_type": "InnoSetup",
+      "silent_args": "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-",
+      "execution_context": "SYSTEM",
+      "is_portable": false,
+      "target_install_path": null,
+      "create_desktop_shortcut": true,
+      "timeout_minutes": 20,
+      "is_global": true,
+      "detection_type": "file_exists",
+      "detection_path": "C:\\Program Files\\AITutor\\python\\python.exe",
+      "assigned_donors": [],
+      "assigned_ngos": [],
+      "test_device_serials": [],
+      "created_days_ago": 10,
+      "updated_days_ago": 1,
+      "demo_stats": {
+        "devices_targeted": 917,
+        "devices_succeeded": 810,
+        "devices_failed": 80,
+        "total_attempts": 940,
+        "last_attempt_days_ago": 0.02
+      },
+      "install_priority": 100,
+      "success_exit_codes": null,
+      "max_retry_attempts": null,
+      "min_rms_version": null
+    },
+    {
+      "id": 4,
+      "software_name": "OBS Studio",
+      "version": "30.2.3",
+      "description": "Screen recording and broadcast tool",
+      "is_active": true,
+      "source_type": "winget",
+      "winget_id": "OBSProject.OBSStudio",
+      "file_name": null,
+      "storage_key": null,
+      "file_url": null,
+      "file_size_bytes": null,
+      "sha256_checksum": null,
+      "checksum_verified_at": null,
+      "installer_type": "NSIS",
+      "silent_args": "/S",
+      "execution_context": "SYSTEM",
+      "is_portable": false,
+      "target_install_path": null,
+      "create_desktop_shortcut": true,
+      "timeout_minutes": 10,
+      "is_global": true,
+      "detection_type": "exit_code_zero",
+      "detection_path": null,
+      "assigned_donors": [],
+      "assigned_ngos": [],
+      "test_device_serials": [],
+      "created_days_ago": 20,
+      "updated_days_ago": 20,
+      "demo_stats": {
+        "devices_targeted": 762,
+        "devices_succeeded": 710,
+        "devices_failed": 30,
+        "total_attempts": 750,
+        "last_attempt_days_ago": 0.08
+      },
+      "install_priority": 100,
+      "success_exit_codes": null,
+      "max_retry_attempts": null,
+      "min_rms_version": null
+    },
+    {
+      "id": 5,
+      "software_name": "VLC Media Player",
+      "version": "3.0.21",
+      "description": "Open source multimedia player",
+      "is_active": true,
+      "source_type": "winget",
+      "winget_id": "VideoLAN.VLC",
+      "file_name": null,
+      "storage_key": null,
+      "file_url": null,
+      "file_size_bytes": null,
+      "sha256_checksum": null,
+      "checksum_verified_at": null,
+      "installer_type": "NSIS",
+      "silent_args": "/S",
+      "execution_context": "SYSTEM",
+      "is_portable": false,
+      "target_install_path": null,
+      "create_desktop_shortcut": true,
+      "timeout_minutes": 8,
+      "is_global": true,
+      "detection_type": "exit_code_zero",
+      "detection_path": null,
+      "assigned_donors": [],
+      "assigned_ngos": [],
+      "test_device_serials": [],
+      "created_days_ago": 40,
+      "updated_days_ago": 40,
+      "demo_stats": {
+        "devices_targeted": 1339,
+        "devices_succeeded": 1280,
+        "devices_failed": 20,
+        "total_attempts": 1310,
+        "last_attempt_days_ago": 0.04
+      },
+      "install_priority": 100,
+      "success_exit_codes": null,
+      "max_retry_attempts": null,
+      "min_rms_version": null
+    },
+    {
+      "id": 6,
+      "software_name": "Sama Social Portable",
+      "version": "1.0.0",
+      "description": "Community and communication portal (portable build)",
+      "is_active": false,
+      "source_type": "rms-repository",
+      "winget_id": "sama-social-portable.zip",
+      "file_name": "sama-social-portable.zip",
+      "storage_key": "softwares/sama-social-portable.zip",
+      "file_url": "https://rms.example.org/softwares/sama-social-portable.zip",
+      "file_size_bytes": 84549376,
+      "sha256_checksum": "f3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "checksum_verified_at": "2026-11-16T11:55:02.363Z",
+      "installer_type": "Portable",
+      "silent_args": "",
+      "execution_context": "LOGGED_IN_USER",
+      "is_portable": true,
+      "target_install_path": "C:\\Program Files\\SamaSocial",
+      "create_desktop_shortcut": true,
+      "timeout_minutes": 5,
+      "is_global": false,
+      "detection_type": "file_exists",
+      "detection_path": "C:\\Program Files\\SamaSocial\\app.exe",
+      "assigned_donors": [
+        {
+          "id": 2,
+          "name": "Infosys Foundation"
+        }
+      ],
+      "assigned_ngos": [
+        {
+          "id": 3,
+          "name": "Pratham Delhi"
+        }
+      ],
+      "test_device_serials": [],
+      "created_days_ago": 8,
+      "updated_days_ago": 3,
+      "demo_stats": {
+        "devices_targeted": 206,
+        "devices_succeeded": 175,
+        "devices_failed": 25,
+        "total_attempts": 210,
+        "last_attempt_days_ago": 0.33
+      },
+      "install_priority": 100,
+      "success_exit_codes": null,
+      "max_retry_attempts": null,
+      "min_rms_version": null
+    }
+  ],
+  "history": [
+    {
+      "id": 101,
+      "device_id": 1,
+      "software_name": "Amazon Future Engineer",
+      "software_id": 2,
+      "current_version": "2.4.1",
+      "is_successful": false,
+      "error_message": "Installation timed out or elevated admin context required",
+      "exit_code": 740,
+      "has_log": true,
+      "is_latest": true,
+      "retry_requested_at": null,
+      "log_output": "[2026-11-12 19:19:10] Starting background install of Amazon Future Engineer\n[2026-11-12 19:19:12] Downloading from https://rms.example.org/softwares/AFE-Setup-v2.4.1.exe ... Done (176 MB)\n[2026-11-12 19:19:15] Executing Start-Process with /VERYSILENT under SYSTEM context\n[2026-11-12 19:19:20] ERROR: Process exited with exit code 740 (The requested operation requires elevation / user session).\n[2026-11-12 19:19:20] Hint: Switch execution context to LOGGED_IN_USER in software portal.",
+      "created_days_ago": 3.69
+    },
+    {
+      "id": 102,
+      "device_id": 1,
+      "software_name": "AI Tutor",
+      "software_id": 3,
+      "current_version": "1.2.0",
+      "is_successful": false,
+      "error_message": "Setup failed: installer returned exit code 1603",
+      "exit_code": 1603,
+      "has_log": true,
+      "is_latest": true,
+      "retry_requested_at": null,
+      "log_output": "[2026-11-12 17:30:45] Starting install of AI Tutor\n[2026-11-12 17:31:00] Download complete\n[2026-11-12 17:31:11] Execution failed with exit code 1603 (Fatal error during installation - another installation was running or files locked).",
+      "created_days_ago": 3.77
+    },
+    {
+      "id": 103,
+      "device_id": 1,
+      "software_name": "Google Chrome",
+      "software_id": 1,
+      "current_version": "131.0.6778.86",
+      "is_successful": true,
+      "error_message": null,
+      "exit_code": 0,
+      "has_log": true,
+      "is_latest": true,
+      "retry_requested_at": null,
+      "log_output": "[2026-11-12 17:26:40] winget install --id Google.Chrome --source winget --silent\n[2026-11-12 17:27:07] Successfully installed Google Chrome\n[2026-11-12 17:27:07] WingetExitCode=0",
+      "created_days_ago": 3.77
+    },
+    {
+      "id": 104,
+      "device_id": 2,
+      "software_name": "Google Chrome",
+      "software_id": 1,
+      "current_version": "131.0.6778.86",
+      "is_successful": true,
+      "error_message": null,
+      "exit_code": 0,
+      "has_log": false,
+      "is_latest": true,
+      "retry_requested_at": null,
+      "log_output": null,
+      "created_days_ago": 3.86
+    },
+    {
+      "id": 105,
+      "device_id": 2,
+      "software_name": "Amazon Future Engineer",
+      "software_id": 2,
+      "current_version": "2.4.1",
+      "is_successful": true,
+      "error_message": null,
+      "exit_code": 0,
+      "has_log": true,
+      "is_latest": true,
+      "retry_requested_at": null,
+      "log_output": "[2026-11-12 15:22:10] Installed successfully with exit code 0. Shortcut created on Desktop.",
+      "created_days_ago": 3.85
+    },
+    {
+      "id": 106,
+      "device_id": 3,
+      "software_name": "VLC Media Player",
+      "software_id": 5,
+      "current_version": "3.0.21",
+      "is_successful": true,
+      "error_message": null,
+      "exit_code": 0,
+      "has_log": false,
+      "is_latest": true,
+      "retry_requested_at": null,
+      "log_output": null,
+      "created_days_ago": 3.91
+    }
+  ],
+  "daily_baseline": [
+    [
+      38,
+      2
+    ],
+    [
+      41,
+      3
+    ],
+    [
+      36,
+      5
+    ],
+    [
+      44,
+      2
+    ],
+    [
+      50,
+      6
+    ],
+    [
+      47,
+      3
+    ],
+    [
+      42,
+      3
+    ],
+    [
+      55,
+      4
+    ],
+    [
+      78,
+      6
+    ],
+    [
+      91,
+      8
+    ],
+    [
+      110,
+      12
+    ],
+    [
+      135,
+      9
+    ],
+    [
+      98,
+      4
+    ],
+    [
+      61,
+      3
+    ]
+  ],
+  "top_errors_baseline": [
+    {
+      "error": "Exit code 740: Elevation required",
+      "exit_code": 740,
+      "count": 48
+    },
+    {
+      "error": "Exit code 1603: Fatal error / file in use",
+      "exit_code": 1603,
+      "count": 32
+    },
+    {
+      "error": "Installer timed out",
+      "exit_code": null,
+      "count": 18
+    },
+    {
+      "error": "winget: source agreements not accepted",
+      "exit_code": -1978335215,
+      "count": 12
+    }
+  ]
+}

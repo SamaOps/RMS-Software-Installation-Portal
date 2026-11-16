@@ -1,0 +1,95 @@
+{
+  "$comment": "Data (not code) that drives installer presets, file-type guessing, exit-code diagnostics and UI labels. Override the whole file with PORTAL_PRESETS_FILE=/path/to/your.json, or add/replace single exit codes with EXIT_CODE_HINTS_FILE. Keys are merged over these defaults.",
+
+  "installer_types": {
+    "InnoSetup": {
+      "label": "Inno Setup",
+      "silentArgs": "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-",
+      "hint": "Most common for indie/education apps. Add /DIR=\"C:\\Path\" to force an install folder.",
+      "extensions": ["exe"]
+    },
+    "NSIS": {
+      "label": "NSIS (Nullsoft)",
+      "silentArgs": "/S",
+      "hint": "/S is case-sensitive. Use /D=C:\\Path as the LAST argument (no quotes) to set the folder.",
+      "extensions": ["exe"]
+    },
+    "MSI": {
+      "label": "Windows Installer (MSI)",
+      "silentArgs": "/qn /norestart",
+      "hint": "Run via msiexec /i \"<file>\" <args>. Add ALLUSERS=1 for machine-wide installs.",
+      "extensions": ["msi"]
+    },
+    "Portable": {
+      "label": "Portable (no installer)",
+      "silentArgs": "",
+      "hint": "Binary (or .zip) is copied/extracted to the target path and a shortcut is created.",
+      "extensions": ["exe", "zip"]
+    },
+    "Custom": {
+      "label": "Custom / Script",
+      "silentArgs": "",
+      "hint": "PowerShell (.ps1) or Batch (.bat/.cmd), or an EXE with vendor-specific flags (e.g. Squirrel: --silent).",
+      "extensions": ["exe", "ps1", "bat", "cmd"]
+    }
+  },
+
+  "default_type_by_extension": {
+    "exe": "InnoSetup",
+    "msi": "MSI",
+    "zip": "Portable",
+    "ps1": "Custom",
+    "bat": "Custom",
+    "cmd": "Custom"
+  },
+
+  "source_types": {
+    "rms-repository": { "label": "Upload file", "description": "Stored in the bucket, served at /softwares/<file>" },
+    "winget": { "label": "Winget package", "description": "Microsoft Store / winget ID" },
+    "external_url": { "label": "External script URL", "description": "Direct link to an installer or script" }
+  },
+
+  "execution_contexts": {
+    "SYSTEM": { "label": "SYSTEM context", "description": "System-wide installs into Program Files. Default." },
+    "LOGGED_IN_USER": { "label": "Logged-in user context", "description": "For per-user apps that install to %LOCALAPPDATA%." }
+  },
+
+  "detection_types": {
+    "exit_code_zero": { "label": "Exit code is a success code" },
+    "file_exists": { "label": "File exists" },
+    "registry_key": { "label": "Registry key exists" }
+  },
+
+  "default_success_exit_codes": [0, 3010, 1641],
+
+  "exit_codes": {
+    "0": { "severity": "success", "title": "Success", "hint": "The installer finished without errors." },
+    "1": { "severity": "error", "title": "Generic failure", "hint": "Check the transcript for the first error line. Many installers return 1 for any failure." },
+    "2": { "severity": "error", "title": "File not found", "hint": "The installer or one of its dependencies is missing. Re-upload and verify the checksum." },
+    "5": { "severity": "error", "title": "Access denied", "hint": "Try SYSTEM context, or the app may need the logged-in user context." },
+    "740": { "severity": "error", "title": "Elevation required", "hint": "The installer needs admin rights. Switch the execution context to SYSTEM." },
+    "1223": { "severity": "error", "title": "Cancelled by user (UAC)", "hint": "A UAC prompt was declined or blocked. Run under SYSTEM context." },
+    "1602": { "severity": "error", "title": "User cancelled", "hint": "The installer showed UI. The silent arguments are probably wrong for this installer type." },
+    "1603": { "severity": "error", "title": "Fatal error during installation", "hint": "Often a file in use, a pending reboot, an older version already installed, or the wrong context." },
+    "1618": { "severity": "warning", "title": "Another installation in progress", "hint": "Windows Installer is busy. The device will retry automatically; or click Retry later." },
+    "1619": { "severity": "error", "title": "Package could not be opened", "hint": "The download may be corrupted or incomplete. Verify the checksum and re-upload." },
+    "1633": { "severity": "error", "title": "Unsupported platform", "hint": "The package targets a different architecture (x86/x64/ARM)." },
+    "1638": { "severity": "warning", "title": "Another version already installed", "hint": "Uninstall the old version first, or set detection to a file/registry check." },
+    "1641": { "severity": "success", "title": "Success, reboot initiated", "hint": "Installed; Windows restarted to finish." },
+    "3010": { "severity": "success", "title": "Success, reboot required", "hint": "Installed; changes take effect after the next restart." },
+    "-1": { "severity": "error", "title": "Process could not start or was killed", "hint": "Usually a timeout, a missing file, or the service could not spawn the installer." },
+    "-1978335189": { "severity": "error", "title": "winget: no applicable installer", "hint": "No installer matches this system (architecture/scope). Try without --scope machine." },
+    "-1978335212": { "severity": "error", "title": "winget: no package found", "hint": "No package matched the ID. Check the exact ID with `winget search`." },
+    "-1978334967": { "severity": "error", "title": "winget: installer hash mismatch", "hint": "The publisher changed the installer. Retry later or pin a version." },
+    "-1978335135": { "severity": "warning", "title": "winget: package already installed", "hint": "Treat as success, or set detection to a file/registry check." },
+    "-1978335215": { "severity": "error", "title": "winget: source agreements not accepted", "hint": "The client must pass --accept-source-agreements." }
+  },
+
+  "error_patterns": [
+    { "match": "timed out|timeout", "title": "Installer timed out", "hint": "Raise the safety timeout, or the installer is waiting for input: check the silent arguments." },
+    { "match": "checksum mismatch|hash mismatch", "title": "Checksum mismatch", "hint": "The downloaded file differs from the upload. Check Nginx/CDN caching, then re-upload." },
+    { "match": "incomplete download|download failed|HTTP 40[34]|HTTP 5\\d\\d", "title": "Download failed", "hint": "The device could not fetch the file. Check the bucket object, Nginx proxy and PUBLIC_DOWNLOAD_BASE_URL." },
+    { "match": "no user is logged in", "title": "No logged-in user", "hint": "Per-user installs wait for someone to sign in. It will be retried on the next check-in." },
+    { "match": "access is denied|unauthorizedaccess", "title": "Access denied", "hint": "Switch execution context, or the target folder is not writable for this account." }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadInstallersOnlyViaTheRmsVpcEndpoint",
+      "Effect": "Allow",
+      "Principal": "*",
+      "Action": "s3:GetObject",
+      "Resource": "arn:aws:s3:::rms-softwares/softwares/*",
+      "Condition": { "StringEquals": { "aws:SourceVpce": "vpce-0123456789abcdef0" } }
+    }
+  ]
+}
