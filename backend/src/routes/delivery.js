@@ -12,7 +12,7 @@ import { pipeline } from 'node:stream/promises';
 import { ah } from '../lib/errors.js';
 import { FILE_NAME_RE } from '../lib/validation.js';
 import { wrapperNameRegex } from '../lib/wrapperScript.js';
-import { getObjectStream, keyFor } from '../storage/s3.js';
+import { getObjectStream, keyFor } from '../storage/index.js';
 
 const r = Router();
 

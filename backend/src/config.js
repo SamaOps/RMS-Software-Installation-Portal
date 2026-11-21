@@ -19,7 +19,14 @@ function ident(name, fallback) {
   return v;
 }
 
+// Public URL of this portal (what laptops can reach). Downloads and install reports derive from it.
+const portalPublicUrl = (process.env.PORTAL_PUBLIC_URL || '').replace(/\/+$/, '');
+// Storage: S3/R2 when S3_BUCKET is set, otherwise this server's own disk (no cloud setup needed).
+const storageDriver = (process.env.STORAGE_DRIVER || (process.env.S3_BUCKET ? 's3' : 'local')).toLowerCase();
+if (!['local', 's3'].includes(storageDriver)) throw new Error(`STORAGE_DRIVER must be "local" or "s3", got "${storageDriver}"`);
+
 export const config = {
+  portalPublicUrl,
   port: Number(process.env.PORT || 4000),
   nodeEnv: process.env.NODE_ENV || 'development',
   // Not needed when the API serves the built UI itself (same origin).
@@ -45,10 +52,13 @@ export const config = {
   },
 
   storage: {
-    // Works for AWS S3 (leave endpoint empty) and Cloudflare R2 / MinIO (set endpoint).
+    driver: storageDriver,
+    // local driver: where files are kept (mount a persistent volume here in Docker).
+    localDir: process.env.STORAGE_DIR || 'data/storage',
+    // s3 driver: works for AWS S3 (leave endpoint empty) and Cloudflare R2 / MinIO (set endpoint).
     endpoint: process.env.S3_ENDPOINT || undefined,
     region: process.env.S3_REGION || 'auto',
-    bucket: required('S3_BUCKET'),
+    bucket: storageDriver === 's3' ? required('S3_BUCKET') : null,
     accessKeyId: process.env.S3_ACCESS_KEY_ID,
     secretAccessKey: process.env.S3_SECRET_ACCESS_KEY,
     forcePathStyle: bool(process.env.S3_FORCE_PATH_STYLE),
@@ -59,11 +69,13 @@ export const config = {
   },
 
   // Public URL prefix the Windows clients use, i.e. ${BACKEND_BASE_URL}/softwares
-  publicDownloadBaseUrl: (process.env.PUBLIC_DOWNLOAD_BASE_URL || '').replace(/\/+$/, ''),
+  // Defaults to <PORTAL_PUBLIC_URL>/softwares (served by this portal); set it to a bucket/CDN URL to offload downloads.
+  publicDownloadBaseUrl: (process.env.PUBLIC_DOWNLOAD_BASE_URL || (portalPublicUrl ? `${portalPublicUrl}/softwares` : '')).replace(/\/+$/, ''),
 
   // Optional: serve GET /softwares/:file from this service (streams from S3) as an
   // alternative to the Nginx -> S3 proxy. See integration guide.
-  enableDownloadProxy: bool(process.env.ENABLE_DOWNLOAD_PROXY),
+  // Serve files from this portal: always with local storage; optional with S3 (private bucket).
+  enableDownloadProxy: storageDriver === 'local' || bool(process.env.ENABLE_DOWNLOAD_PROXY),
   downloadProxyPath: '/' + (process.env.DOWNLOAD_PROXY_PATH || 'softwares').replace(/^\/+|\/+$/g, ''),
 
   // Existing RMS tables used for lookups. Defaults match navgurukul/windows-rms-server
@@ -80,6 +92,11 @@ export const config = {
     deviceUser: ident('DEVICES_USERNAME_COLUMN', 'username'),
     deviceLocation: ident('DEVICES_LOCATION_COLUMN', 'location'),
     deviceActive: ident('DEVICES_ACTIVE_COLUMN', 'isactive'),
+    deviceVersion: ident('DEVICES_RMS_VERSION_COLUMN', 'rms_version'),
+    // "Last seen" = latest activity row the RMS client sends (windows-rms-server laptop_tracking).
+    lastSeenTable: ident('LAST_SEEN_TABLE', 'laptop_tracking'),
+    lastSeenDeviceFk: ident('LAST_SEEN_DEVICE_COLUMN', 'device_id'),
+    lastSeenTime: ident('LAST_SEEN_TIME_COLUMN', 'timestamp'),
     deviceNgoFk: ident('DEVICES_NGO_FK_COLUMN', 'ngo_id'),
     deviceDonorFk: ident('DEVICES_DONOR_FK_COLUMN', 'donor_id'),
   },

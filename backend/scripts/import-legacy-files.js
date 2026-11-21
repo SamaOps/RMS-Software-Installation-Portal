@@ -3,7 +3,7 @@
 // storage_key, size and server-computed SHA-256 so clients can verify downloads.
 // Usage: npm run import-legacy            (add --dry-run to only report)
 import { pool } from '../src/db.js';
-import { headObject, keyFor, sha256OfObject } from '../src/storage/s3.js';
+import { headObject, keyFor, sha256OfObject } from '../src/storage/index.js';
 
 const dry = process.argv.includes('--dry-run');
 const { rows } = await pool.query(

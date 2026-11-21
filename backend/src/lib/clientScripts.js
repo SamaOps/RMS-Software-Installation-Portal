@@ -6,13 +6,10 @@
 import { config } from '../config.js';
 import { HttpError } from './errors.js';
 import { generateWrapper, needsWrapper } from './wrapperScript.js';
-import { keyFor, putObject, publicUrlFor } from '../storage/s3.js';
+import { keyFor, putObject, publicUrlFor } from '../storage/index.js';
 import { wrapper } from '../settings.js';
 
-const ROW_SQL = `SELECT id, software_name, version, source, file_name, file_url, winget_id, sha256_checksum, file_size_bytes,
-                        installer_type, silent_args, execution_context, target_install_path, create_desktop_shortcut,
-                        timeout_minutes, detection_type, detection_path, success_exit_codes, client_script_url
-                 FROM softwares WHERE id = $1`;
+const ROW_SQL = `SELECT * FROM softwares WHERE id = $1`;
 
 /** Build the script for a DB row without publishing it (preview). */
 export function buildForRow(row) {

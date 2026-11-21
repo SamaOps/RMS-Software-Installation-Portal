@@ -18,12 +18,15 @@ import {
   RotateCw,
   Search,
   ShieldCheck,
+  CopyPlus,
+  Laptop,
   TerminalSquare,
   Trash2,
   TrendingUp,
 } from 'lucide-react';
 import { ActionsMenu } from '../components/ActionsMenu';
-import { CanaryModal } from '../components/CanaryModal';
+import { RolloutModal } from '../components/RolloutModal';
+import { useServerPatch } from '../lib/defaults';
 import { ClientScriptModal } from '../components/ClientScriptModal';
 import { SoftwareWizard } from '../components/SoftwareWizard';
 import { Badge, Button, ConfirmModal, EmptyState, Spinner, Switch } from '../components/ui';
@@ -49,7 +52,14 @@ export function InventoryPage() {
 
   const [wizardOpen, setWizardOpen] = useState(false);
   const [editing, setEditing] = useState<Software | null>(null);
-  const [canary, setCanary] = useState<Software | null>(null);
+  const [basedOn, setBasedOn] = useState<Software | null>(null);
+  const patch = useServerPatch();
+  const openWizard = (edit: Software | null, base: Software | null = null) => {
+    setEditing(edit);
+    setBasedOn(base);
+    setWizardOpen(true);
+  };
+  const [rolloutOf, setRolloutOf] = useState<Software | null>(null);
   const [scriptOf, setScriptOf] = useState<Software | null>(null);
   const [deleting, setDeleting] = useState<Software | null>(null);
   const [retrying, setRetrying] = useState<Software | null>(null);
@@ -166,10 +176,7 @@ export function InventoryPage() {
             <span className="hidden sm:inline">Refresh</span>
           </Button>
           <Button
-            onClick={() => {
-              setEditing(null);
-              setWizardOpen(true);
-            }}
+            onClick={() => openWizard(null)}
             icon={<Plus className="h-4 w-4" />}
           >
             Upload / Add new software
@@ -324,10 +331,13 @@ export function InventoryPage() {
                       )}
                     </td>
                     <td className="td">
+                      <StageChip s={s} onOpen={() => setRolloutOf(s)} />
                       <Targets s={s} />
                     </td>
                     <td className="td">
-                      <SuccessBar s={s} />
+                      <button type="button" className="w-full text-left" title="See which laptops have it" onClick={() => navigate(`/laptops?software_id=${s.id}&status=not_installed`)}>
+                        <SuccessBar s={s} />
+                      </button>
                     </td>
                     <td className="td">
                       <Switch checked={s.is_active} disabled={busy[s.id]} onChange={(v) => toggleActive(s, v)} label={`Toggle ${s.software_name}`} />
@@ -338,14 +348,19 @@ export function InventoryPage() {
                           {
                             label: 'Edit parameters',
                             icon: <Pencil />,
-                            onClick: () => {
-                              setEditing(s);
-                              setWizardOpen(true);
-                            },
+                            onClick: () => openWizard(s),
                           },
-                          { label: 'Canary test', icon: <FlaskConical />, onClick: () => setCanary(s) },
-                          { label: 'View device logs', icon: <FileSearch />, onClick: () => navigate(`/history?software_id=${s.id}`) },
-                          { label: 'Retry all failed', icon: <RotateCw />, onClick: () => setRetrying(s), hidden: !s.stats.devices_failed },
+                          {
+                            label: 'New version',
+                            icon: <CopyPlus />,
+                            onClick: () => openWizard(null, s),
+                            hidden: s.source_type === 'winget', // winget installs the latest version itself
+                          },
+                          { label: 'Pilot & release', icon: <FlaskConical />, onClick: () => setRolloutOf(s) },
+                          { label: 'Laptops: who has it', icon: <Laptop />, onClick: () => navigate(`/laptops?software_id=${s.id}`) },
+                          { label: 'Install logs', icon: <FileSearch />, onClick: () => navigate(`/history?software_id=${s.id}`) },
+                          // Without the server patch, failed installs are retried automatically at each laptop's next start.
+                          { label: 'Retry all failed', icon: <RotateCw />, onClick: () => setRetrying(s), hidden: !patch || !s.stats.devices_failed },
                           { label: 'View install script', icon: <TerminalSquare />, onClick: () => setScriptOf(s), hidden: s.delivery !== 'install_script' },
                           { label: 'Verify checksum', icon: <ShieldCheck />, onClick: () => verify(s), hidden: s.source_type !== 'rms-repository' || !s.storage_key },
                           { label: 'Delete', icon: <Trash2 />, danger: true, onClick: () => setDeleting(s) },
@@ -365,8 +380,16 @@ export function InventoryPage() {
         </p>
       )}
 
-      <SoftwareWizard open={wizardOpen} onClose={() => setWizardOpen(false)} editing={editing} defaults={defaults} onSaved={upsert} />
-      <CanaryModal software={canary} onClose={() => setCanary(null)} onSaved={upsert} />
+      <SoftwareWizard
+        open={wizardOpen}
+        onClose={() => setWizardOpen(false)}
+        editing={editing}
+        basedOn={basedOn}
+        onNewVersion={(s) => openWizard(null, s)}
+        defaults={defaults}
+        onSaved={upsert}
+      />
+      <RolloutModal software={rolloutOf} onClose={() => setRolloutOf(null)} onSaved={upsert} />
       <ClientScriptModal software={scriptOf} onClose={() => setScriptOf(null)} onSaved={upsert} />
       <ConfirmModal
         open={!!deleting}
@@ -462,13 +485,43 @@ function Targets({ s }: { s: Software }) {
         +{named.length - 2} more
       </Badge>,
     );
-  if (s.test_device_serials.length)
-    chips.push(
-      <Badge key="c" color="amber" icon={<FlaskConical className="h-3 w-3" />} title={s.test_device_serials.join(', ')}>
-        {s.test_device_serials.length} canary
-      </Badge>,
-    );
-  return chips.length ? <div className="flex max-w-[260px] flex-wrap gap-1">{chips}</div> : <span className="text-xs text-slate-400">Not assigned</span>;
+  return chips.length ? (
+    <div className="mt-1 flex max-w-[260px] flex-wrap gap-1">{chips}</div>
+  ) : (
+    <span className="mt-1 block text-xs text-slate-400">No release targets</span>
+  );
+}
+
+/** Rollout stage: pilot progress, failed pilot, or released. Click opens the pilot & release panel. */
+function StageChip({ s, onOpen }: { s: Software; onOpen: () => void }) {
+  const r = s.rollout;
+  const g = r?.gate;
+  let color: 'green' | 'amber' | 'red' | 'gray' = 'green';
+  let text = 'Released';
+  if (!s.is_active) {
+    color = 'gray';
+    text = 'Paused';
+  } else if (r?.stage === 'pilot') {
+    if (r.pilot_outcome === 'failed' || g?.outcome === 'failed') {
+      color = 'red';
+      text = `Pilot failed · ${g?.failed ?? 0} failed`;
+    } else if (g?.outcome === 'passed') {
+      text = s.auto_release ? 'Pilot passed · releasing' : 'Pilot passed · release?';
+    } else if (g?.outcome === 'no_devices') {
+      color = 'amber';
+      text = 'Pilot: no laptops';
+    } else {
+      color = 'amber';
+      text = `Pilot ${g?.succeeded ?? 0}/${g?.required ?? 0}`;
+    }
+  }
+  return (
+    <button type="button" onClick={onOpen} title="Pilot & release" className="block">
+      <Badge color={color} icon={<FlaskConical className="h-3 w-3" />}>
+        {text}
+      </Badge>
+    </button>
+  );
 }
 
 function SuccessBar({ s }: { s: Software }) {

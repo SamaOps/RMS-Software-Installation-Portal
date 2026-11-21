@@ -35,6 +35,7 @@
 const express = require('express');
 
 const IDENT = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+const PATCH_VERSION = '2';
 
 function ident(value, name) {
   if (value === '' || value === null || value === undefined) return null;
@@ -68,6 +69,7 @@ function resolveOptions(opts) {
     maxLogBytes: num(pick('maxLogBytes', 'MAX_LOG_BYTES'), 256 * 1024),
     maxErrorChars: num(pick('maxErrorChars', 'MAX_ERROR_CHARS'), 2000),
     jsonLimit: pick('jsonLimit', 'ADD_HISTORY_JSON_LIMIT', '1mb'),
+    heartbeatSeconds: num(pick('heartbeatSeconds', 'PORTAL_HEARTBEAT_SECONDS'), 300),
     logger: opts.logger || console,
   };
 }
@@ -77,6 +79,21 @@ function createSoftwareClientRouter(opts = {}) {
   if (!pool) throw new Error('[softwareClientRoutes] { pool } is required');
   const o = resolveOptions(opts);
   const router = express.Router();
+
+  // Tell the portal this RMS server can target single laptops (pilot serials). Throttled, best effort.
+  let lastBeat = 0;
+  const heartbeat = () => {
+    if (!o.heartbeatSeconds || Date.now() - lastBeat < o.heartbeatSeconds * 1000) return;
+    lastBeat = Date.now();
+    pool
+      .query(
+        `INSERT INTO rms_server_heartbeat (source, version, capabilities, last_seen_at)
+         VALUES ('server-patch', $1, $2, NOW())
+         ON CONFLICT (source) DO UPDATE SET version = EXCLUDED.version, capabilities = EXCLUDED.capabilities, last_seen_at = NOW()`,
+        [PATCH_VERSION, JSON.stringify({ device_targeting: true, retry_requests: true, install_priority: true, min_rms_version: true })],
+      )
+      .catch(() => {}); // table missing (migration 004 not applied) -> portal simply assumes no device targeting
+  };
 
   const deviceSql = `SELECT id,
       ${o.donorFk ? o.donorFk : 'NULL'} AS donor_id,
@@ -143,6 +160,7 @@ function createSoftwareClientRouter(opts = {}) {
     const caps = String(req.query.caps || req.get('x-rms-client-caps') || '');
     const supportsV2 = caps.split(',').map((c) => c.trim()).includes('v2');
 
+    heartbeat();
     try {
       const dev = (await pool.query(deviceSql, [serial])).rows[0];
       if (!dev) return res.json([]); // legacy behaviour for unregistered laptops

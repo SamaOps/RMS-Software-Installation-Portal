@@ -1,159 +1,112 @@
 # RMS Software Portal
 
-A standalone web portal for uploading, configuring, targeting and monitoring Windows software for the RMS fleet. It replaces SSH/FTP uploads and manual SQL inserts, and it doesn't break the existing `windows-rms` clients.
+Upload a software once, **test it on a few laptops, then install it on every laptop that runs RMS**, from a web page. No EC2, SSH, FTP, SQL or AWS console. Works with the RMS server and the RMS client (1.4.0) exactly as they are deployed today. Setup needs **four settings**.
 
 ```
- Admin browser ──(1) presigned PUT / multipart──▶  S3 / R2 bucket  softwares/<file>
-      │                                                   ▲
-      │ (2) /api/admin/*                                   │ (4) GET /softwares/<file>
-      ▼                                                   │     (Nginx proxy + cache, same URL as today)
- Portal API (Node/Express) ──▶ PostgreSQL (existing RMS DB)  ◀── windows-rms-server ◀── (3) laptops poll
-                                 softwares, donor_softwares,        /api/softwares/notInstalled
-                                 ngo_softwares, softwares_installed
+ Admin (browser) ──► Portal (UI + API + file storage, one Node service)
+                       │ /softwares/… (installers + scripts)   │ software + live targeting
+                       ▼                                       ▼
+          Laptop downloads over HTTPS                   RMS PostgreSQL ◄── windows-rms-server (unchanged)
+                       ▲                                                   ▲ notInstalled / addHistory
+                       └──────────── Laptop: RMS client 1.4.0 (unchanged) runs the install script
 ```
+
+**Start here for deployment and the full design:** [`integration/INTEGRATION_GUIDE.md`](integration/INTEGRATION_GUIDE.md).
+
+## How a release works
+
+1. **Add software**: drop a file (`.exe .msi .zip .ps1 .bat .cmd`, up to 2 GB, with an in-browser SHA-256), or enter a winget ID or URL. Name and version are suggested from the file name.
+2. **Install settings**: the portal **detects the installer type from the file** (Inno Setup, NSIS, MSI, WiX, InstallShield, Advanced Installer, Squirrel) and fills in the silent arguments. Everything else (install location, SYSTEM or logged-in user, timeout, detection, exit codes) has good defaults under *More install options*.
+3. **Test & release**:
+   - **Pilot**: a lab NGO/donor group (and serials, if the server patch is present). On save it installs **only** there.
+   - **Release to**: all laptops, or donors / NGOs.
+   - **Rule**: "N pilot laptops succeed, at most M fail". It releases automatically when the rule passes, or waits for your click.
+4. **Laptops**: every RMS laptop with what it has **installed**, what **failed** and what is still **waiting**, plus RMS version and last seen. Filter by NGO, donor, software or status, click a laptop for its full software list and logs, and export CSV. Click any software's install bar in the inventory to see exactly which laptops still miss it. The status uses the same rules as the RMS server, so "waiting" is exactly what each laptop will install at its next start.
+5. **Watch**: Inventory shows each software's stage (`Pilot 3/5`, `Pilot failed`, `Released`, `Paused`). **Pilot & release** lists every pilot laptop's result. **Device History** shows each attempt with the exit code, a plain-English diagnosis and the install log, plus CSV export.
+6. **Update**: **New version** copies the settings into a new entry and pilots it. The old version is paused automatically when the new one is released. RMS tracks installs by name, so updates are never done in place once installed.
+
+**Pause** removes a software from every laptop's list at any stage.
+
+## Design in one paragraph
+
+The portal owns two target sets per software (pilot and release) and **writes the tables `windows-rms-server` already reads** (`softwares.is_global`, `donor_softwares`, `ngo_softwares`) from the rollout stage. For uploaded and URL software it generates **one PowerShell install script** that applies every setting, stores it in the bucket, and puts its URL in `winget_id`. The 1.4.0 client runs any `.ps1` URL as an elevated script, so no client or server change is needed. The script reports its exit code and log back to the portal. The **optional server patch** adds single-laptop pilots, Retry, install priority, a retry limit and a minimum client version. The portal detects it and only shows those options when it is present.
 
 ## What's inside
 
 | Path | Contents |
 |---|---|
-| `db/migrations/001_software_portal_up.sql` | Additive, idempotent, transactional migration (+ `_down.sql`) |
-| `db/migrations/002_rollout_parameters_up.sql` | Adds `install_priority`, `success_exit_codes`, `max_retry_attempts`, `min_rms_version` (+ `_down.sql`) |
-| `db/migrations/003_client_scripts_up.sql` | Install-script columns + `software_install_reports` (+ `_down.sql`, which repoints `winget_id` back to the file) |
-| `backend/src/lib/wrapperScript.js` | Generates the per-software PowerShell install script that deployed 1.4.0 clients run |
-| `backend/config/portal-presets.json` | **Data, not code:** installer presets, extension→type map, labels, exit-code catalog, error patterns |
-| `backend/demo/seed.json` | Data for the offline demo (`npm run demo`) |
-| `db/fixtures/` | Mirror of the `windows-rms-server` schema (`donors.donor_name`, `"NGOs"."NGO_name"`, …) with fictional data, **for local testing only** |
-| `backend/` | Express API: JWT auth, S3/R2 storage adapter, presigned single + multipart uploads, CRUD, targeting, canary, retry, analytics, history, optional download proxy |
-| `frontend/` | Vite + React + TypeScript + Tailwind UI: inventory dashboard, 3-step add/edit wizard, device history and log viewer, dark/light mode, toasts |
-| `integration/INTEGRATION_GUIDE.md` | **Start here for deployment.** Bucket setup, Nginx, migration of existing files, compatibility notes, verification results |
-| `integration/nginx/rms.conf` | Serves `/softwares/<file>` from the bucket, with disk cache and legacy-disk fallback, plus the portal vhost |
-| `integration/aws/` | CORS, bucket policies, least-privilege IAM policy, lifecycle rule |
-| `integration/server-patch/` | Optional drop-in (CommonJS) `notInstalled` / `addHistory` routes: canary, Retry, per-software auto-retry cap, install priority, min client version, logs |
-| `integration/client-patch/` | Optional client module: silent args, user context, checksum, timeout, success exit codes, detection, log reporting, HMAC auth |
+| `backend/src/` | Express API: auth, uploads (presigned / multipart), software CRUD, rollout engine (`lib/rollout.js`), install-script generator (`lib/wrapperScript.js`), history, analytics, install-report endpoint |
+| `backend/config/portal-presets.json` | **Data, not code**: installer presets and install-location switches, extension→type map, labels, exit-code catalog, error patterns |
+| `backend/.env.example` | The 4 settings you need |
+| `docs/CONFIGURATION.md` | Every optional setting with its default (you rarely need any) |
+| `frontend/` | Vite + React + TypeScript + Tailwind UI |
+| `db/migrations/` | 001–004, additive and idempotent, each with a `_down.sql` |
+| `db/fixtures/` | Mirror of the `windows-rms-server` schema with fictional data, **for local testing only** |
+| `integration/INTEGRATION_GUIDE.md` | Architecture, deployment, migrating existing software, canary, limits, verification, rollback |
+| `integration/aws/` | Only for the optional S3 mode: bucket CORS, read policies, least-privilege IAM, lifecycle |
+| `integration/server-patch/` | **Optional** drop-in for `windows-rms-server` (single-laptop pilots, Retry, priority, limits) |
+| `integration/nginx/rms.conf` | **Optional**: only to keep legacy EC2-disk files served at `/softwares/` before migrating them |
+| `backend/demo-server.js` + `backend/demo/seed.json` | Offline demo (no DB/S3), using the same presets and rules as the API |
 
-## Works with the RMS client already on the laptops (1.4.0)
-
-The deployed client ignores the portal's parameters for raw installers, and crashes on non-InnoSetup EXE/MSI files (an undefined `silentArgs`). But it **does** run any `winget_id` that is an `https://…/*.ps1` URL as an elevated script. So for every uploaded or URL software, the portal:
-
-1. **generates a PowerShell install script** from the software's parameters. The script: downloads the installer; checks size and SHA-256; runs it by type (Inno/NSIS/EXE, `msiexec` for MSI, `.ps1`, `.bat`/`.cmd`, portable copy or `.zip` extraction plus shortcut); runs as SYSTEM-elevated or as the logged-in user; enforces the timeout; checks file/registry detection (skips if already installed); applies the success exit codes; and holds a machine-wide lock so installs never overlap;
-2. **uploads it next to the installers** (`/softwares/rms-install-<name>-<hash>.ps1`; content-hashed, so caches never serve a stale script) and **points `winget_id` at it**;
-3. receives the script's **detailed result** (exit code, error, transcript) at `POST /api/client/install-report` and shows it in Device History next to the client's plain success/failure.
-
-This happens automatically on every save. For existing rows run `npm run publish-scripts` (`--dry-run` first). Inventory → ⋯ → **View install script** shows exactly what laptops run. Winget software is left as is (the client handles winget natively). Switch off with `CLIENT_COMPAT_WRAPPER=false`.
-
-**1.4.0 limits that remain:** laptops check only when RMS starts (reboot). The client reads the result once, after 5 min × pending items. A slower install is recorded as failed, then re-checked at the next start (the script's own report shows the real outcome).
-
-## Configuration: nothing is hard-coded
+## Configuration: nothing hard-coded
 
 | What | Where |
 |---|---|
-| Limits and behaviour (timeouts, canary size, retry caps, priorities, page sizes, upload tuning, analytics windows, rate limits…) | Env vars, all listed with defaults in `backend/.env.example`. The UI reads them from `GET /api/admin/lookups/installer-defaults`. |
-| Installer presets, silent flags, extension→type map, labels, exit-code hints, error patterns | `backend/config/portal-presets.json`. Replace with `PORTAL_PRESETS_FILE`, or extend exit codes with `EXIT_CODE_HINTS_FILE`. |
-| RMS table and column names | `DONORS_*`, `NGOS_*`, `DEVICES_*`. Defaults match `windows-rms-server`; missing optional columns are detected at startup and the feature degrades. |
-| Laptop-side defaults (client patch) | `RMS_*` env vars on the laptop; values sent by the server win. |
+| Required: database, public URL, login | `backend/.env.example` (4 values) |
+| Optional behaviour (release rule defaults, limits, storage, S3, analytics…) | `docs/CONFIGURATION.md`; all have defaults; the UI reads them from the API |
+| Installer presets, detection signatures, install-location switches, exit-code hints | `backend/config/portal-presets.json` (data, not code) |
+| RMS table and column names | `DONORS_*`, `NGOS_*`, `DEVICES_*` (defaults match `windows-rms-server`; missing optional columns are detected) |
+| What the RMS server supports | Detected from the server patch heartbeat (`RMS_SERVER_DEVICE_TARGETING=auto`) |
 
-## Features
-
-**Inventory dashboard**
-- Header stats: softwares managed, active deployments, fleet success rate, and failed installs needing attention (click through to the failing devices).
-- Search by name or winget ID / file name. Filter by source, target and status.
-- Table with icon, version and type, source badge, assignment badges, a rollout bar against the devices actually targeted ("850 / 920 installed, 12 failed, 58 pending"), an active switch, and an actions menu (Edit, Canary test, View device logs, Retry all failed, Verify checksum, Delete).
-
-**Add / edit wizard**
-1. **Source**: upload a file (drag-and-drop, direct-to-bucket, live progress, SHA-256 computed in the browser while uploading, multipart above 100 MB, up to 2 GB), a winget ID, or an external script URL. Then name, version and notes.
-2. **Execution**: installer presets (from the presets file) that fill in silent args, editable args with a reset button, SYSTEM vs logged-in user, portable folder and shortcut, a timeout slider (`TIMEOUT_MIN/MAX_MINUTES`), and success detection (exit code, file, or registry). **Advanced rollout parameters**: success exit codes, install priority, automatic-retry cap, and a minimum RMS client version.
-3. **Targeting**: global, donor and NGO searchable multi-selects, up to `CANARY_MAX_DEVICES` canary serials (checked against RMS devices), active or paused, and a summary of the exact command that will run.
-
-**Device history**
-- Serial, laptop model / NGO, software, status, timestamp, error and exit code.
-- Filter by search, software, status, date range, and latest-attempt-only.
-- Click any row to open the log viewer: raw transcript with errors highlighted, a server-side diagnosis (exit-code catalog + error patterns from the presets file), copy log, and **Retry deployment**.
-- **Export CSV** of the filtered history (audit report), capped at `EXPORT_MAX_ROWS`.
-
-**Safety rails**
-- Live binaries can't be overwritten.
-- Names are unique and locked once installs exist, because history is keyed by name.
-- Strict file-name and storage-key validation (no traversal).
-- Server-side size check when saving, plus on-demand server-side SHA-256 re-verification.
-- Soft delete; the file is kept in storage.
-- Audit log of every admin action.
-- Login rate limiting with bcrypt + JWT.
-
- ## Quick start (local)
+## Quick start (local)
 
 ```bash
-# Postgres with your RMS schema (or db/fixtures/legacy_schema_for_testing.sql for a demo)
-psql "$DATABASE_URL" -f db/fixtures/legacy_schema_for_testing.sql   # demo only
-
-cd backend
-cp .env.example .env            # set DATABASE_URL, JWT_SECRET, S3_*, ADMIN_USERS
-npm install
-npm run migrate                 # applies 001, 002, 003
-npm run publish-scripts -- --dry-run   # then without --dry-run: install scripts for existing software
+psql "$DATABASE_URL" -f db/fixtures/legacy_schema_for_testing.sql   # test schema only
+cd backend && cp .env.example .env    # DATABASE_URL, PORTAL_PUBLIC_URL, JWT_SECRET, ADMIN_USERS
+npm install && npm run migrate        # 001–004
 npm run hash-password -- admin 'choose-a-strong-password'   # paste into ADMIN_USERS
-npm run dev                     # API on :4000
-
-cd ../frontend
-npm install
-npm run dev                     # UI on :5173 (proxies /api to :4000)
+npm run dev                           # API on :4000
+cd ../frontend && npm install && npm run dev                 # UI on :5173 (proxies /api)
 ```
 
-For local S3, run MinIO (`S3_ENDPOINT=http://localhost:9000`, `S3_FORCE_PATH_STYLE=true`) and apply `integration/aws/s3-cors.json` to the bucket.
-
-Production: `npm run build` in `frontend/`. The API then serves `frontend/dist` itself, so you run a single Node process behind Nginx (see the integration guide), or use the `Dockerfile`.
+Files are stored on the portal's disk (`backend/data/storage`) unless `S3_BUCKET` is set.
+Offline demo instead: `cd backend && npm run demo` (any login works; `DEMO_DEVICE_TARGETING=true` simulates the server patch).
+Production: `npm run build` in `frontend/`; the API serves `frontend/dist`, or use the `Dockerfile`.
 
 ## API
 
-All routes need `Authorization: Bearer <token>` from `POST /api/admin/auth/login`.
+All `/api/admin/*` routes need `Authorization: Bearer <token>` from `POST /api/admin/auth/login`.
 
 | Method & path | Purpose |
 |---|---|
-| `POST /api/admin/softwares/upload-url` | `{file_name, file_size_bytes, software_id?}` → `{mode:'single', url}` or `{mode:'multipart', upload_id, part_size, part_count}` |
-| `POST /api/admin/softwares/multipart/sign-parts` · `/complete` · `/abort` | Multipart flow |
-| `GET /api/admin/softwares?search=&source=&target=&status=` | List with per-device install stats and assignments |
-| `GET /api/admin/softwares/:id` | One software |
-| `POST /api/admin/softwares` | Create with all parameters + donors/NGOs/canary |
-| `PUT /api/admin/softwares/:id` | Edit parameters + targeting |
-| `PATCH /api/admin/softwares/:id/status` | `{is_active}` kill switch |
-| `PUT /api/admin/softwares/:id/test-devices` | `{serials}` canary devices |
-| `POST /api/admin/softwares/:id/retry` | `{serial_numbers}` or `{all_failed:true}` |
-| `POST /api/admin/softwares/:id/verify-checksum` | Re-hash the stored object server-side |
-| `DELETE /api/admin/softwares/:id` | Soft delete (also deactivates) |
-| `GET /api/admin/softwares/:id/audit` | Admin action history |
-| `GET /api/admin/analytics/status` | Inventory counts, fleet success rate, 14-day series, top errors |
-| `GET /api/admin/softwares?…&sort=newest\|priority\|name\|failures` | Sorting |
-| `GET /api/admin/history?search=&status=&software_id=&ngo_id=&donor_id=&exit_code=&from=&to=&latest_only=&page=` | Install attempts, each with a `diagnosis` |
-| `GET /api/admin/history/export.csv?<same filters>` | Downloadable audit report |
-| `GET /api/admin/history/:id` | One attempt including `log_output` and `diagnosis` |
-| `GET /api/admin/lookups/donors` · `/ngos` · `/devices?search=` · `/installer-defaults` · `/exit-codes` | Form data, presets, limits |
-| `GET /api/admin/softwares/:id/client-script` · `POST` same | Preview / (re)publish the generated install script |
-| `POST /api/client/install-report` *(public, rate-limited)* | Detailed result posted by install scripts |
-
-The full software payload, with validation rules, is in `backend/src/lib/validation.js`.
-
-## Offline demo
-
-```bash
-cd backend && npm run demo        # API on :4000 (DEMO_PORT), any login works, data from demo/seed.json
-cd frontend && npm run dev        # UI on :5173
-```
-
-The demo uses the same `settings.js` and presets file as the real API, so limits and presets behave identically.
+| `POST /api/admin/softwares/upload-url` (+ `/multipart/*` with S3) · `PUT /api/storage/upload` (signed, portal disk) | Uploads |
+| `GET /softwares/:file` *(public)* | Installers and install scripts for laptops |
+| `GET /api/admin/softwares?search=&source=&target=&status=&stage=&sort=` | Inventory with stats and rollout stage |
+| `GET` · `PUT` · `DELETE /api/admin/softwares/:id` | One software (PUT refuses installer changes once installed → New version) |
+| `POST /api/admin/softwares` | Create (starts the pilot; `replaces_software_id` for a new version) |
+| `PATCH /api/admin/softwares/:id/status` | `{is_active}`: pause removes it from every laptop |
+| `GET /api/admin/softwares/:id/rollout` | Pilot laptops, results, release rule |
+| `POST /api/admin/softwares/:id/rollout/check` · `/release` (`{force}`) · `/restart-pilot` | Evaluate now, release, back to pilot |
+| `GET` · `POST /api/admin/softwares/:id/client-script` | Preview / republish the install script |
+| `POST /api/admin/softwares/:id/verify-checksum` · `GET …/audit` | Re-hash stored file · admin action history |
+| `POST /api/admin/softwares/:id/retry` · `PUT …/test-devices` | Server patch only (otherwise failed installs retry at the next start) |
+| `GET /api/admin/devices?search=&ngo_id=&donor_id=&software_id=&status=&sort=` · `/devices/export.csv` · `/devices/:serial` | Laptops: installed / failed / waiting per laptop, summary counts, per-laptop detail |
+| `GET /api/admin/history` · `/history/export.csv` · `/history/:id` | Install attempts with diagnosis and log |
+| `GET /api/admin/analytics/status` | Inventory counts, success rate, daily series, top errors |
+| `GET /api/admin/lookups/donors` · `/ngos` · `/devices` · `/installer-defaults` · `/exit-codes` · `/rms-server` | Form data, presets, limits, server capabilities |
+| `POST /api/client/install-report` *(public, rate-limited, token)* | Detailed result from install scripts |
 
 ## Testing
 
 ```bash
-# API end-to-end (needs a running API on a DB seeded with the fixture + migration, and an S3-compatible endpoint)
-cd backend && API_URL=http://localhost:4100 ADMIN_USER=admin ADMIN_PASS=… npm test
-
-# Server patch behaviour
-cp ../integration/server-patch/softwareClientRoutes.js scr_tmp.cjs
-DATABASE_URL=… node test/server-patch.manual.js && rm scr_tmp.cjs
+cd backend && API_URL=http://localhost:4100 ADMIN_USER=admin ADMIN_PASS=… npm test     # API e2e (DB + S3-compatible endpoint)
+cp ../integration/server-patch/softwareClientRoutes.js scr_tmp.cjs && DATABASE_URL=… node test/server-patch.manual.js; rm scr_tmp.cjs
 ```
 
-## Design notes and known limits
+## Known limits (from the deployed RMS client)
 
-- **Real RMS schema names:** `donors.donor_name`, `"NGOs"."NGO_name"`, `softwares.isactive`, `softwares_installed.issuccessful`. These are the defaults. The `devices` table has no model column, so the UI shows username and location instead.
-- **Install history is matched by `software_name`**, because the legacy `softwares_installed` has no `software_id`. That's why renaming is blocked once history exists. To push a new major version to devices that already have the old one, add it as a new entry (e.g. "AI Tutor 2.2") and pause the old one.
-- **Old clients ignore the new execution parameters** until they run the client patch. Upload, targeting, pause and analytics work immediately. See the integration guide, §1.
-- Sessions use `sessionStorage`, so closing the tab signs you out. Admin accounts live in `ADMIN_USERS`. Swap `src/auth.js` for SSO (e.g. Google Workspace OIDC) if you need per-person accounts at scale.
+- Laptops check for new software only when RMS starts.
+- The client records the result once, 5 min × pending items after start. The install script's own report shows the real outcome, and the release rule trusts it.
+- RMS tracks installs by **name**: updates are a **New version**, and renaming is blocked once installs exist.
+- Without the server patch, pilots are by NGO/donor group (tip: a "RMS Lab" NGO with your test laptops).
+- Sessions use `sessionStorage`. Admin accounts live in `ADMIN_USERS`; swap `src/auth.js` for SSO if needed.

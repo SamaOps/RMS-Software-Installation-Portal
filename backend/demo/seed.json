@@ -342,7 +342,7 @@
         }
       ],
       "test_device_serials": [],
-      "created_days_ago": 8,
+      "created_days_ago": 1,
       "updated_days_ago": 3,
       "demo_stats": {
         "devices_targeted": 206,
@@ -354,7 +354,19 @@
       "install_priority": 100,
       "success_exit_codes": null,
       "max_retry_attempts": null,
-      "min_rms_version": null
+      "min_rms_version": null,
+      "rollout_stage": "pilot",
+      "pilot_outcome": "running",
+      "pilot_ngos": [
+        {
+          "id": 2,
+          "name": "Navgurukul Dharamshala"
+        }
+      ],
+      "pilot_donors": [],
+      "auto_release": true,
+      "pilot_required_successes": null,
+      "pilot_max_failures": 0
     }
   ],
   "history": [

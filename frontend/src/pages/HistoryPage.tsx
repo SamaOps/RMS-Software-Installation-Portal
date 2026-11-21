@@ -7,12 +7,13 @@ import { LogModal } from '../components/LogModal';
 import { Badge, Button, ConfirmModal, EmptyState, Spinner } from '../components/ui';
 import { api, apiError } from '../lib/api';
 import { formatDate, timeAgo } from '../lib/format';
-import { useDefaults } from '../lib/defaults';
+import { useDefaults, useServerPatch } from '../lib/defaults';
 import type { HistoryRow, Software } from '../lib/types';
 
 export function HistoryPage() {
   // Page size comes from the server (HISTORY_PAGE_SIZE); the response echoes the size actually used.
   const defaults = useDefaults();
+  const patch = useServerPatch();
   const [pageSize, setPageSize] = useState<number | null>(null);
   const PAGE_SIZE = pageSize ?? defaults?.limits.history_page_size ?? 50;
   const [exporting, setExporting] = useState(false);
@@ -102,7 +103,7 @@ export function HistoryPage() {
           <p className="text-sm text-slate-500">Every install attempt reported by RMS clients. Click a row to see the debug log.</p>
         </div>
         <div className="flex gap-2">
-          {currentSoftware && currentSoftware.stats.devices_failed > 0 && (
+          {patch && currentSoftware && currentSoftware.stats.devices_failed > 0 && (
             <Button variant="secondary" icon={<RotateCw className="h-4 w-4" />} onClick={() => setRetryingAll(true)}>
               Retry {currentSoftware.stats.devices_failed} failed
             </Button>

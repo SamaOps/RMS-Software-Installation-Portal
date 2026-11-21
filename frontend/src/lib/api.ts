@@ -3,6 +3,11 @@ import type {
   Analytics,
   Defaults,
   DeviceHit,
+  LaptopDetail,
+  LaptopRow,
+  LaptopSummary,
+  RolloutStatus,
+  ServerCapabilities,
   HistoryDetail,
   HistoryRow,
   NamedRef,
@@ -67,6 +72,19 @@ export function apiError(err: unknown): { message: string; fields: FieldError[] 
 
 const data = <T>(p: Promise<{ data: { data: T } }>) => p.then((r) => r.data.data);
 
+/** CSV download through the authenticated API (a plain link can't send the token). */
+async function downloadCsv(path: string, params: Record<string, string | number | undefined>, fallback: string) {
+  const r = await http.get(path, { params, responseType: 'blob' });
+  const name = /filename="([^"]+)"/.exec(String(r.headers['content-disposition'] ?? ''))?.[1] ?? fallback;
+  const url = URL.createObjectURL(r.data as Blob);
+  const a = Object.assign(document.createElement('a'), { href: url, download: name });
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return { truncated: r.headers['x-export-truncated'] ? Number(r.headers['x-export-truncated']) : null };
+}
+
 export const api = {
   login: (username: string, password: string) =>
     data<{ token: string; username: string }>(http.post('/api/admin/auth/login', { username, password })),
@@ -94,6 +112,12 @@ export const api = {
       current: r.headers['x-script-current'] === 'true',
     })),
   publishClientScript: (id: Software['id']) => data<Software>(http.post(`/api/admin/softwares/${id}/client-script`)),
+  rollout: (id: Software['id']) => data<RolloutStatus>(http.get(`/api/admin/softwares/${id}/rollout`)),
+  checkRollout: (id: Software['id']) =>
+    data<{ result: string | null; software: Software }>(http.post(`/api/admin/softwares/${id}/rollout/check`)),
+  release: (id: Software['id'], force = false) => data<Software>(http.post(`/api/admin/softwares/${id}/rollout/release`, { force })),
+  restartPilot: (id: Software['id']) => data<Software>(http.post(`/api/admin/softwares/${id}/rollout/restart-pilot`)),
+  rmsServer: () => data<ServerCapabilities>(http.get('/api/admin/lookups/rms-server')),
 
   donors: () => data<NamedRef[]>(http.get('/api/admin/lookups/donors')),
   ngos: () => data<NamedRef[]>(http.get('/api/admin/lookups/ngos')),
@@ -109,15 +133,12 @@ export const api = {
   historyDetail: (id: HistoryRow['id']) => data<HistoryDetail>(http.get(`/api/admin/history/${id}`)),
 
   /** Downloads the filtered install history as CSV (auth header required, so not a plain link). */
-  exportHistory: async (params: Record<string, string | number | undefined>) => {
-    const r = await http.get('/api/admin/history/export.csv', { params, responseType: 'blob' });
-    const name = /filename="([^"]+)"/.exec(String(r.headers['content-disposition'] ?? ''))?.[1] ?? 'rms-install-history.csv';
-    const url = URL.createObjectURL(r.data as Blob);
-    const a = Object.assign(document.createElement('a'), { href: url, download: name });
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-    return { truncated: r.headers['x-export-truncated'] ? Number(r.headers['x-export-truncated']) : null };
-  },
+  exportHistory: (params: Record<string, string | number | undefined>) => downloadCsv('/api/admin/history/export.csv', params, 'rms-install-history.csv'),
+
+  laptops: (params: Record<string, string | number | undefined>) =>
+    http
+      .get('/api/admin/devices', { params })
+      .then((r) => r.data as { data: LaptopRow[]; summary: LaptopSummary; total: number; page: number; page_size: number }),
+  laptop: (serial: string) => data<LaptopDetail>(http.get(`/api/admin/devices/${encodeURIComponent(serial)}`)),
+  exportLaptops: (params: Record<string, string | number | undefined>) => downloadCsv('/api/admin/devices/export.csv', params, 'rms-laptops.csv'),
 };

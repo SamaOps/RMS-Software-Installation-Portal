@@ -4,6 +4,7 @@ import { config } from '../config.js';
 import { ah } from '../lib/errors.js';
 import { schema, q, deviceColumnsSql } from '../lib/schema.js';
 import { limits, uiSettings, presets } from '../settings.js';
+import { serverCapabilities } from '../lib/rollout.js';
 
 const r = Router();
 const t = config.tables;
@@ -58,6 +59,9 @@ r.get('/installer-defaults', (_req, res) =>
     }),
   }),
 );
+
+/** What the connected RMS server can do (single-laptop pilots need the server patch). */
+r.get('/rms-server', ah(async (_req, res) => res.json({ data: await serverCapabilities() })));
 
 /** Exit-code catalog for the log viewer (also included in /installer-defaults). */
 r.get('/exit-codes', (_req, res) => res.json({ data: presets.exit_codes }));

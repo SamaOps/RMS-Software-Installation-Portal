@@ -7,10 +7,15 @@ import {
   defaultSilentArgs,
 } from './installerDefaults.js';
 import { config } from '../config.js';
-import { allowedExtensions, fileNameRegex, limits } from '../settings.js';
+import { allowedExtensions, fileNameRegex, limits, rollout } from '../settings.js';
 
 export const FILE_NAME_RE = fileNameRegex;
 const EXT_LIST = allowedExtensions.map((e) => `.${e}`).join('/');
+export const hasPilotTargets = (d) => d.test_device_serials.length > 0 || d.pilot_ngos.length > 0 || d.pilot_donors.length > 0;
+
+/** Field-level 400 in the same shape as schema validation errors. */
+export const fieldError = (path, message) => new z.ZodError([{ code: 'custom', path: [path], message }]);
+
 export const SERIAL_RE = /^[A-Za-z0-9._\-/]+$/; // RMS serials may contain "/" (see windows-rms-server logsController)
 const EXIT_CODES_RE = /^-?\d+(\s*,\s*-?\d+)*$/;
 const VERSION_RE = /^[0-9]+(\.[0-9]+){0,3}$/;
@@ -55,7 +60,7 @@ export const softwareInput = z
     file_url: optText(2048),
 
     // C. Execution
-    installer_type: z.enum(Object.keys(INSTALLER_TYPES)).optional().nullable(),
+    installer_type: z.string().max(50).optional().nullable(),
     silent_args: z
       .string()
       .max(2000)
@@ -63,6 +68,13 @@ export const softwareInput = z
       .optional()
       .nullable(),
     execution_context: z.enum(EXECUTION_CONTEXTS).default('SYSTEM'),
+    run_as: z.enum(['system', 'user']).optional(),
+    elevation: z.enum(['highest', 'none']).optional(),
+    pre_install_script: z.string().max(10000).optional().nullable(),
+    post_install_script: z.string().max(10000).optional().nullable(),
+    custom_install_script: z.string().max(10000).optional().nullable(),
+    process_name_to_wait: z.string().max(100).optional().nullable(),
+    timeout_seconds: z.number().int().min(10).max(14400).optional().nullable(),
     is_portable: z.boolean().optional(),
     target_install_path: optText(500),
     create_desktop_shortcut: z.boolean().default(true),
@@ -86,10 +98,22 @@ export const softwareInput = z
     max_retry_attempts: z.number().int().min(0).max(limits.maxRetryAttemptsCeiling).optional().nullable(),
     min_rms_version: z.string().trim().regex(VERSION_RE, 'Use a version like 2.1.0').optional().nullable().or(z.literal('')),
 
-    // D. Targeting
+    // D. Release targets (the fleet, after the pilot passes)
     is_global: z.boolean().default(false),
     assigned_donors: z.array(id).max(500).default([]),
     assigned_ngos: z.array(id).max(2000).default([]),
+
+    // E. Pilot (test first): serials need the server patch; NGO/donor groups work on any RMS server
+    pilot_ngos: z.array(id).max(rollout.maxPilotGroups, `Use at most ${rollout.maxPilotGroups} pilot groups`).default([]),
+    pilot_donors: z.array(id).max(rollout.maxPilotGroups, `Use at most ${rollout.maxPilotGroups} pilot groups`).default([]),
+    pilot_required_successes: z.number().int().min(1).max(10_000).optional().nullable(),
+    pilot_max_failures: z.number().int().min(0).max(10_000).optional().nullable(),
+    auto_release: z.boolean().default(rollout.autoReleaseDefault),
+    // Skip the pilot and go straight to the fleet (only when REQUIRE_PILOT=false).
+    release_now: z.boolean().default(false),
+    // "New version": the entry this one replaces; it is paused when this one is released.
+    replaces_software_id: z.union([z.string().trim().min(1).max(64), z.number().int().positive()]).optional().nullable()
+      .transform((v) => (v == null ? null : String(v))),
     test_device_serials: z
       .array(z.string().trim().min(3).max(100).regex(SERIAL_RE, 'Invalid serial number'))
       .max(limits.canaryMaxDevices, `Use at most ${limits.canaryMaxDevices} canary devices`)
@@ -145,11 +169,19 @@ export const softwareInput = z
         issue('detection_path', 'Use a key like HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\<id>');
     }
 
+    if (d.release_now && rollout.requirePilot)
+      issue('release_now', 'A pilot is required before release (REQUIRE_PILOT=true)');
+    // "A pilot is required" is enforced by the routes: only when a pilot actually starts
+    // (create, or an installer change), so editing an already-released software doesn't need one.
+
     if (d.execution_context === 'LOGGED_IN_USER' && d.target_install_path?.toLowerCase().includes('program files'))
       issue('execution_context', 'Per-user installs usually cannot write to Program Files. Use SYSTEM or a %LOCALAPPDATA% path.');
   })
   .transform((d) => {
-    const isPortable = d.installer_type === 'Portable' || d.is_portable === true;
+    const isPortable = d.installer_type === 'Portable' || d.installer_type === 'portable' || d.is_portable === true;
+    const runAs = d.run_as || (d.execution_context === 'LOGGED_IN_USER' ? 'user' : 'system');
+    const elevation = d.elevation || (d.execution_context === 'LOGGED_IN_USER' ? 'none' : 'highest');
+    const timeoutSeconds = d.timeout_seconds || (d.timeout_minutes * 60) || 600;
     const fileName =
       d.source_type === 'external_url'
         ? decodeURIComponent(new URL(d.file_url).pathname.split('/').pop())
@@ -160,6 +192,13 @@ export const softwareInput = z
       ...d,
       is_portable: isPortable,
       file_name: fileName,
+      run_as: runAs,
+      elevation: elevation,
+      pre_install_script: d.pre_install_script ? d.pre_install_script.trim() : null,
+      post_install_script: d.post_install_script ? d.post_install_script.trim() : null,
+      custom_install_script: d.custom_install_script ? d.custom_install_script.trim() : null,
+      process_name_to_wait: d.process_name_to_wait ? d.process_name_to_wait.trim() : null,
+      timeout_seconds: timeoutSeconds,
       // winget_id keeps its legacy meaning: winget package ID OR the downloadable file name.
       // The existing client downloads `${BACKEND}/softwares/${winget_id}`.
       winget_id: d.source_type === 'winget' ? d.winget_id : fileName,
@@ -172,6 +211,10 @@ export const softwareInput = z
         d.target_install_path || (isPortable ? `C:\\Program Files\\${d.software_name.replace(/[<>:"/\\|?*]/g, '')}` : null),
       detection_path: d.detection_type === 'exit_code_zero' ? null : d.detection_path,
       test_device_serials: [...new Set(d.test_device_serials)],
+      pilot_ngos: [...new Set(d.pilot_ngos.map(String))],
+      pilot_donors: [...new Set(d.pilot_donors.map(String))],
+      pilot_required_successes: d.pilot_required_successes ?? null,
+      pilot_max_failures: d.pilot_max_failures ?? null,
       assigned_donors: [...new Set(d.assigned_donors.map(String))],
       assigned_ngos: [...new Set(d.assigned_ngos.map(String))],
       // Only rms-repository rows carry storage metadata.

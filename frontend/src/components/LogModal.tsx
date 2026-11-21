@@ -4,7 +4,7 @@ import { CheckCircle2, Copy, RotateCw, XCircle } from 'lucide-react';
 import { Badge, Button, Modal, Spinner } from './ui';
 import { api, apiError } from '../lib/api';
 import { formatDate } from '../lib/format';
-import { useDefaults } from '../lib/defaults';
+import { useDefaults, useServerPatch } from '../lib/defaults';
 import type { HistoryDetail, HistoryRow } from '../lib/types';
 
 
@@ -13,6 +13,7 @@ export function LogModal({ row, onClose, onRetried }: { row: HistoryRow | null; 
   const [loading, setLoading] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const defaults = useDefaults();
+  const patch = useServerPatch();
 
   useEffect(() => {
     if (!row) return;
@@ -70,7 +71,10 @@ export function LogModal({ row, onClose, onRetried }: { row: HistoryRow | null; 
               Copy log
             </Button>
           )}
-          {row && !row.is_successful && (
+          {row && !row.is_successful && !patch && (
+            <span className="mr-auto text-xs text-slate-500">This laptop retries automatically the next time RMS starts.</span>
+          )}
+          {row && !row.is_successful && patch && (
             <Button onClick={retry} loading={retrying} disabled={!row.software_id || !row.serial_number || !!row.retry_requested_at} icon={<RotateCw className="h-4 w-4" />}>
               {row.retry_requested_at ? 'Retry already queued' : 'Retry deployment'}
             </Button>

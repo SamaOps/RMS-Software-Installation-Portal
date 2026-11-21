@@ -13,13 +13,16 @@ import { login, requireAdmin } from './auth.js';
 import { ah, errorHandler } from './lib/errors.js';
 import { introspect } from './lib/schema.js';
 import { limits } from './settings.js';
+import { startRolloutJob } from './lib/rollout.js';
 import softwares from './routes/softwares.js';
 import uploads from './routes/uploads.js';
 import lookups from './routes/lookups.js';
 import analytics from './routes/analytics.js';
 import history from './routes/history.js';
+import devices from './routes/devices.js';
 import delivery from './routes/delivery.js';
 import clientReports from './routes/clientReports.js';
+import storageUpload from './routes/storageUpload.js';
 
 const app = express();
 app.set('trust proxy', 1); // behind Nginx
@@ -65,7 +68,11 @@ admin.use('/softwares', softwares);
 admin.use('/lookups', lookups);
 admin.use('/analytics', analytics);
 admin.use('/history', history);
+admin.use('/devices', devices);
 app.use('/api/admin', admin);
+
+// --- Local storage upload target (signed URLs, like S3 presigned PUTs) --------
+app.use('/api/storage', storageUpload);
 
 // --- Public: detailed results posted by generated install scripts ------------
 app.use('/api/client', clientReports);
@@ -73,7 +80,7 @@ app.use('/api/client', clientReports);
 // --- Optional binary delivery proxy -----------------------------------------
 if (config.enableDownloadProxy) {
   app.use(config.downloadProxyPath, delivery);
-  console.log(`[delivery] ${config.downloadProxyPath}/:file proxy enabled`);
+  console.log(`[delivery] serving ${config.downloadProxyPath}/:file from ${config.storage.driver} storage`);
 }
 
 // --- Serve the built frontend if present (single-container deploy) ----------
@@ -90,4 +97,5 @@ app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found' }));
 app.use(errorHandler);
 
 await introspect();
+startRolloutJob();
 app.listen(config.port, () => console.log(`RMS Software Portal API listening on :${config.port}`));

@@ -5,7 +5,7 @@
  */
 import { useEffect, useState } from 'react';
 import { api } from './api';
-import type { Defaults, InstallerType } from './types';
+import type { Defaults, InstallerType, ServerCapabilities } from './types';
 
 let cache: Defaults | null = null;
 let inflight: Promise<Defaults> | null = null;
@@ -39,4 +39,30 @@ export function guessInstallerType(name: string, d: Defaults | null): InstallerT
 export function fileNameRegex(d: Defaults | null) {
   const exts = d?.allowed_extensions?.length ? d.allowed_extensions : ['[a-z0-9]{1,10}'];
   return new RegExp(`^[A-Za-z0-9][A-Za-z0-9._-]{0,200}\\.(${exts.join('|')})$`, 'i');
+}
+
+// ---------------------------------------------------------------------------
+// What the connected RMS server can do. Features that only the optional server patch
+// honours (single-laptop pilots, Retry, install priority, retry limit, minimum client
+// version) are hidden unless the patch is detected, so the UI never offers no-ops.
+// ---------------------------------------------------------------------------
+let capsCache: ServerCapabilities | null = null;
+let capsInflight: Promise<ServerCapabilities> | null = null;
+
+export function loadServerCaps(): Promise<ServerCapabilities> {
+  if (capsCache) return Promise.resolve(capsCache);
+  capsInflight ??= api
+    .rmsServer()
+    .then((c) => (capsCache = c))
+    .finally(() => (capsInflight = null));
+  return capsInflight;
+}
+
+/** true when the RMS server runs the optional server patch. */
+export function useServerPatch(): boolean {
+  const [c, setC] = useState<ServerCapabilities | null>(capsCache);
+  useEffect(() => {
+    if (!capsCache) loadServerCaps().then(setC).catch(() => setC(null));
+  }, []);
+  return !!c?.device_targeting;
 }

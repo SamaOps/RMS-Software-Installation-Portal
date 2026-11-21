@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import clsx from 'clsx';
-import { History, LayoutGrid, LogOut, Moon, PackageOpen, Sun } from 'lucide-react';
+import { History, Laptop, LayoutGrid, LogOut, Moon, PackageOpen, Sun } from 'lucide-react';
 import { session } from '../lib/api';
 
 function useTheme() {
@@ -21,7 +21,8 @@ function useTheme() {
 
 const NAV = [
   { to: '/', label: 'Inventory', icon: LayoutGrid, end: true },
-  { to: '/history', label: 'Device History', icon: History, end: false },
+  { to: '/laptops', label: 'Laptops', icon: Laptop, end: false },
+  { to: '/history', label: 'Install History', icon: History, end: false },
 ];
 
 export function Layout() {

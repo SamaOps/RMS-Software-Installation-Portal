@@ -22,7 +22,8 @@ import {
   presignParts,
   completeMultipart,
   abortMultipart,
-} from '../storage/s3.js';
+  supportsMultipart,
+} from '../storage/index.js';
 import { limits } from '../settings.js';
 
 const r = Router();
@@ -63,7 +64,8 @@ r.post(
     const key = keyFor(body.file_name);
     const existing = await headObject(key);
 
-    if (body.file_size_bytes < MULTIPART_THRESHOLD) {
+    // Local disk storage streams any size in one PUT; S3/R2 switch to multipart above the threshold.
+    if (!supportsMultipart || body.file_size_bytes < MULTIPART_THRESHOLD) {
       return res.json({
         data: { mode: 'single', storage_key: key, url: await presignPut(key), replaces_existing_object: !!existing },
       });

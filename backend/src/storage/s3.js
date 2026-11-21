@@ -36,6 +36,7 @@ const client = new S3Client({
   responseChecksumValidation: 'WHEN_REQUIRED',
 });
 
+export const supportsMultipart = true;
 const CONTENT_TYPE = 'application/octet-stream';
 
 export const keyFor = (fileName) => `${cfg.keyPrefix}${fileName}`;

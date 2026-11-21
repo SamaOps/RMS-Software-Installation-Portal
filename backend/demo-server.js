@@ -19,6 +19,8 @@ import { fileURLToPath } from 'node:url';
 import { limits, uiSettings, fileNameRegex, defaultSuccessExitCodes } from './src/settings.js';
 import { diagnose } from './src/lib/diagnostics.js';
 import { generateWrapper, needsWrapper } from './src/lib/wrapperScript.js';
+import { evaluateGate } from './src/lib/rolloutRules.js';
+import { rollout as R, bool } from './src/settings.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.DEMO_PORT || process.env.PORT || 4000);
@@ -27,6 +29,8 @@ const SEED_FILE = path.resolve(process.env.DEMO_SEED_FILE || path.join(here, 'de
 const PUBLIC_BASE = (process.env.DEMO_PUBLIC_DOWNLOAD_BASE_URL || process.env.PUBLIC_DOWNLOAD_BASE_URL || `http://localhost:${PORT}/softwares`).replace(/\/+$/, '');
 const KEY_PREFIX = (process.env.S3_KEY_PREFIX ?? 'softwares/').replace(/^\/+/, '');
 const DAY = 86_400_000;
+// Mimic the RMS server: the unmodified server can only target groups (NGO/donor), not single laptops.
+const DEVICE_TARGETING = bool(process.env.DEMO_DEVICE_TARGETING, false);
 
 const seed = JSON.parse(fs.readFileSync(SEED_FILE, 'utf8'));
 const ago = (days) => (days == null ? null : new Date(Date.now() - days * DAY).toISOString());
@@ -112,6 +116,67 @@ function statsFor(s) {
   };
 }
 
+// --- Rollout (same rules as the real API: src/lib/rolloutRules.js) ---------------------------
+const ids = (list) => (list ?? []).map((x) => String(x.id ?? x));
+function pilotDevices(s) {
+  const serials = new Set((s.test_device_serials ?? []).map((x) => x.toLowerCase()));
+  const pn = new Set(ids(s.pilot_ngos));
+  const pd = new Set(ids(s.pilot_donors));
+  return devices
+    .filter((d) => (DEVICE_TARGETING && serials.has(d.serial_number.toLowerCase())) || pn.has(String(d.ngo_id)) || pd.has(String(d.donor_id)))
+    .map((d) => {
+      const h = history
+        .filter((x) => x.device_id === d.id && x.software_name === s.software_name)
+        .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+      return {
+        device_id: d.id,
+        serial_number: d.serial_number,
+        username: d.username ?? null,
+        location: d.location ?? null,
+        ngo_name: d.ngo_id != null ? nameOf(ngos, d.ngo_id) : null,
+        status: !h ? 'pending' : h.is_successful ? 'succeeded' : 'failed',
+        last_attempt_at: h?.created_at ?? null,
+        exit_code: h?.exit_code ?? null,
+        error_message: h?.error_message ?? null,
+      };
+    });
+}
+function gateOf(s) {
+  const p = pilotDevices(s);
+  return evaluateGate(s, { total: p.length, succeeded: p.filter((x) => x.status === 'succeeded').length, failed: p.filter((x) => x.status === 'failed').length });
+}
+function release(s, actor, outcome = null) {
+  s.rollout_stage = 'released';
+  s.released_at = new Date().toISOString();
+  s.released_by = actor;
+  if (outcome) s.pilot_outcome = outcome;
+  // New version released -> pause the version it replaces
+  const prev = s.replaces_software_id && find(s.replaces_software_id);
+  if (prev && prev.is_active) {
+    prev.is_active = false;
+    log(prev.id, 'pause', { reason: 'replaced by a new version', by_software_id: String(s.id) });
+  }
+}
+function startPilot(s) {
+  Object.assign(s, { rollout_stage: 'pilot', pilot_outcome: 'running', pilot_started_at: new Date().toISOString(), released_at: null, released_by: null });
+}
+/** Evaluate pilots like the API's background job. */
+function checkPilots() {
+  for (const s of live()) {
+    if (s.rollout_stage !== 'pilot' || !s.is_active) continue;
+    const g = gateOf(s);
+    const outcome = g.outcome === 'passed' ? 'passed' : g.outcome === 'failed' ? 'failed' : 'running';
+    if (outcome !== s.pilot_outcome) {
+      s.pilot_outcome = outcome;
+      if (outcome !== 'running') log(s.id, `pilot_${outcome}`, g);
+    }
+    if (outcome === 'passed' && s.auto_release !== false) {
+      release(s, 'auto-rollout', 'passed');
+      log(s.id, 'release', { reason: 'pilot passed' });
+    }
+  }
+}
+
 function toApi(s) {
   const { demo_stats, created_days_ago, updated_days_ago, deleted_at, ...rest } = s;
   const fileName = s.file_name || (s.source_type === 'rms-repository' ? s.winget_id : null);
@@ -123,6 +188,19 @@ function toApi(s) {
     file_name: fileName,
     download_url: s.source_type === 'rms-repository' && fileName ? `${PUBLIC_BASE}/${encodeURIComponent(fileName)}` : s.file_url,
     install_priority: s.install_priority ?? limits.installPriorityDefault,
+    pilot_ngos: s.pilot_ngos ?? [],
+    pilot_donors: s.pilot_donors ?? [],
+    pilot_required_successes: s.pilot_required_successes ?? null,
+    pilot_max_failures: s.pilot_max_failures ?? null,
+    auto_release: s.auto_release !== false,
+    rollout: {
+      stage: s.rollout_stage || 'released',
+      pilot_outcome: s.pilot_outcome ?? null,
+      pilot_started_at: s.pilot_started_at ?? null,
+      released_at: s.released_at ?? null,
+      released_by: s.released_by ?? null,
+      gate: gateOf(s),
+    },
     effective_max_retry_attempts: s.max_retry_attempts ?? limits.maxAutoRetryAttempts,
     created_by: s.created_by ?? DEMO_USER,
     stats: statsFor(s),
@@ -259,6 +337,7 @@ app.get('/api/admin/lookups/exit-codes', (_req, res) => res.json({ data: uiSetti
 
 // --- Softwares ---
 app.get('/api/admin/softwares', (req, res) => {
+  checkPilots();
   const { search, status, source, target, sort = 'newest' } = req.query;
   let list = live();
   if (search) {
@@ -296,6 +375,7 @@ function fromPayload(p, existing = {}) {
     ...p,
     winget_id: p.source_type === 'winget' ? p.winget_id : fileName,
     file_name: fileName,
+    is_active: p.is_active ?? existing.is_active ?? true,
     is_portable: p.installer_type === 'Portable' || !!p.is_portable,
     timeout_minutes: p.timeout_minutes ?? limits.timeoutDefaultMinutes,
     install_priority: p.install_priority ?? existing.install_priority ?? limits.installPriorityDefault,
@@ -305,9 +385,16 @@ function fromPayload(p, existing = {}) {
     assigned_donors: (p.assigned_donors ?? []).map((id) => ({ id, name: nameOf(donors, id) })),
     assigned_ngos: (p.assigned_ngos ?? []).map((id) => ({ id, name: nameOf(ngos, id) })),
     test_device_serials: [...new Set(p.test_device_serials ?? [])],
+    pilot_ngos: (p.pilot_ngos ?? []).map((id) => ({ id, name: nameOf(ngos, id) })),
+    pilot_donors: (p.pilot_donors ?? []).map((id) => ({ id, name: nameOf(donors, id) })),
+    pilot_required_successes: p.pilot_required_successes ?? null,
+    pilot_max_failures: p.pilot_max_failures ?? null,
+    auto_release: p.auto_release ?? R.autoReleaseDefault,
+    replaces_software_id: p.replaces_software_id != null ? String(p.replaces_software_id) : existing.replaces_software_id ?? null,
     updated_at: new Date().toISOString(),
   };
 }
+const INSTALL_FIELDS = ['source_type', 'file_name', 'file_url', 'winget_id', 'sha256_checksum', 'installer_type', 'silent_args', 'execution_context', 'target_install_path', 'detection_type', 'detection_path', 'success_exit_codes', 'timeout_minutes'];
 
 function validate(p, selfId) {
   const fields = [];
@@ -317,7 +404,13 @@ function validate(p, selfId) {
   if (p.timeout_minutes != null && (p.timeout_minutes < limits.timeoutMinMinutes || p.timeout_minutes > limits.timeoutMaxMinutes))
     fields.push({ path: 'timeout_minutes', message: `Use ${limits.timeoutMinMinutes}–${limits.timeoutMaxMinutes} minutes` });
   if ((p.test_device_serials ?? []).length > limits.canaryMaxDevices)
-    fields.push({ path: 'test_device_serials', message: `Use at most ${limits.canaryMaxDevices} canary devices` });
+    fields.push({ path: 'test_device_serials', message: `Use at most ${limits.canaryMaxDevices} pilot laptops` });
+  if (p.release_now && R.requirePilot) fields.push({ path: 'release_now', message: 'A pilot is required before release (REQUIRE_PILOT=true)' });
+  const groups = (p.pilot_ngos ?? []).length + (p.pilot_donors ?? []).length;
+  if (!selfId && !p.release_now && !groups && !(p.test_device_serials ?? []).length)
+    fields.push({ path: 'test_device_serials', message: 'Choose pilot laptops (serials) or a pilot NGO/donor group to test on first' });
+  else if (!p.release_now && !groups && (p.test_device_serials ?? []).length && !DEVICE_TARGETING)
+    return { status: 400, body: { error: 'Your RMS server cannot target single laptops yet. Add a pilot NGO or donor group, or deploy the server patch.' } };
   if (p.source_type === 'winget' && !p.winget_id) fields.push({ path: 'winget_id', message: 'Winget package ID is required' });
   if (p.source_type === 'rms-repository' && !p.file_name) fields.push({ path: 'file_name', message: 'Upload a file first' });
   return fields.length ? { status: 400, body: { error: 'Validation failed', fields } } : null;
@@ -328,6 +421,8 @@ app.post('/api/admin/softwares', (req, res) => {
   if (bad) return res.status(bad.status).json(bad.body);
   const created = { ...fromPayload(req.body), id: Date.now(), created_at: new Date().toISOString(), created_by: DEMO_USER, deleted_at: null };
   publishScript(created);
+  if (req.body.release_now) release(created, DEMO_USER);
+  else startPilot(created);
   softwares.unshift(created);
   log(created.id, 'create', { source: created.source_type, file: created.winget_id });
   res.status(201).json({ data: toApi(created) });
@@ -338,9 +433,23 @@ app.put('/api/admin/softwares/:id', (req, res) => {
   if (!s) return notFound(res);
   const bad = validate(req.body, s.id);
   if (bad) return res.status(bad.status).json(bad.body);
-  Object.assign(s, fromPayload(req.body, s));
+  const before = Object.fromEntries(INSTALL_FIELDS.map((f) => [f, String(s[f] ?? '')]));
+  const next = fromPayload(req.body, { ...s });
+  if (next.source_type === 'winget') next.winget_id = req.body.winget_id;
+  else next.winget_id = s.winget_id; // script URL is regenerated below
+  const changed = INSTALL_FIELDS.filter((f) => f !== 'winget_id' || next.source_type === 'winget').filter((f) => before[f] !== String(next[f] ?? ''));
+  // Same rule as the API: RMS never re-offers a name that succeeded, so updates are a New version.
+  const installedOn = new Set(history.filter((h) => h.software_name === s.software_name && h.is_successful).map((h) => h.device_id)).size + (s.demo_stats?.devices_succeeded ?? 0);
+  if (changed.length && installedOn > 0)
+    return res.status(409).json({
+      error: `"${s.software_name}" is already installed on ${installedOn} laptop(s). Laptops never reinstall the same name, so use "New version" instead.`,
+      details: { code: 'new_version_required', changed },
+    });
+  Object.assign(s, next);
   publishScript(s);
-  log(s.id, 'update');
+  if (req.body.release_now && !R.requirePilot) release(s, DEMO_USER);
+  else if (changed.length) startPilot(s);
+  log(s.id, 'update', { changed });
   res.json({ data: toApi(s) });
 });
 
@@ -366,6 +475,11 @@ app.put('/api/admin/softwares/:id/test-devices', (req, res) => {
 app.post('/api/admin/softwares/:id/retry', (req, res) => {
   const s = find(req.params.id);
   if (!s) return notFound(res);
+  if (!DEVICE_TARGETING)
+    return res.status(409).json({
+      error: 'Not needed on your RMS server: failed installs are retried automatically the next time each laptop starts RMS.',
+      details: { code: 'retry_automatic' },
+    });
   let serials = req.body.serial_numbers ?? [];
   if (req.body.all_failed)
     serials = latestPerDevice(s.software_name)
@@ -424,6 +538,142 @@ app.get('/softwares/:file', (req, res) => {
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
   res.send(c);
 });
+
+app.get('/api/admin/softwares/:id/rollout', (req, res) => {
+  checkPilots();
+  const s = find(req.params.id);
+  if (!s) return notFound(res);
+  const devs = pilotDevices(s);
+  const listed = new Set(devs.map((d) => d.serial_number.toLowerCase()));
+  const rest = (s.test_device_serials ?? []).filter((x) => !listed.has(x.toLowerCase()));
+  const known = new Set(devices.map((d) => d.serial_number.toLowerCase()));
+  res.json({
+    data: {
+      stage: s.rollout_stage || 'released',
+      pilot_outcome: s.pilot_outcome ?? null,
+      auto_release: s.auto_release !== false,
+      is_active: !!s.is_active,
+      pilot_started_at: s.pilot_started_at ?? null,
+      pilot_decided_at: null,
+      released_at: s.released_at ?? null,
+      released_by: s.released_by ?? null,
+      gate: gateOf(s),
+      devices: devs,
+      unregistered_serials: rest.filter((x) => !known.has(x.toLowerCase())),
+      unreachable_serials: rest.filter((x) => known.has(x.toLowerCase())),
+      server: { device_targeting: DEVICE_TARGETING, mode: 'env', server_patch: null },
+    },
+  });
+});
+app.post('/api/admin/softwares/:id/rollout/check', (req, res) => {
+  checkPilots();
+  const s = find(req.params.id);
+  return s ? res.json({ data: { result: s.rollout_stage === 'released' ? 'released' : s.pilot_outcome, software: toApi(s) } }) : notFound(res);
+});
+app.post('/api/admin/softwares/:id/rollout/release', (req, res) => {
+  const s = find(req.params.id);
+  if (!s) return notFound(res);
+  if (s.rollout_stage === 'released') return res.status(409).json({ error: 'Already released' });
+  const g = gateOf(s);
+  if (g.outcome !== 'passed' && !(req.body?.force && R.allowForceRelease))
+    return res.status(409).json({ error: `The pilot has not passed yet (${g.succeeded}/${g.required} succeeded, ${g.failed} failed).` });
+  release(s, DEMO_USER, g.outcome === 'passed' ? 'passed' : null);
+  log(s.id, g.outcome === 'passed' ? 'release' : 'release_forced', { gate: g });
+  res.json({ data: toApi(s) });
+});
+app.post('/api/admin/softwares/:id/rollout/restart-pilot', (req, res) => {
+  const s = find(req.params.id);
+  if (!s) return notFound(res);
+  startPilot(s);
+  log(s.id, 'pilot_restart');
+  res.json({ data: toApi(s) });
+});
+// --- Laptops (same rules as src/routes/devices.js) ----------------------------
+/** Live targeting for a demo software, derived from its stage (like lib/rollout.js syncLiveTargets). */
+function isTargeted(sw, d) {
+  if (!sw.is_active || sw.deleted_at) return false;
+  const released = (sw.rollout_stage || 'released') === 'released';
+  const inPilot =
+    ids(sw.pilot_ngos).includes(String(d.ngo_id)) ||
+    ids(sw.pilot_donors).includes(String(d.donor_id)) ||
+    (DEVICE_TARGETING && (sw.test_device_serials ?? []).some((x) => x.toLowerCase() === d.serial_number.toLowerCase()));
+  if (!released) return inPilot;
+  return inPilot || !!sw.is_global || ids(sw.assigned_ngos).includes(String(d.ngo_id)) || ids(sw.assigned_donors).includes(String(d.donor_id));
+}
+function laptopSoftwares(d, onlyId) {
+  return live()
+    .filter((sw) => (!onlyId || String(sw.id) === String(onlyId)))
+    .map((sw) => {
+      const hs = history.filter((h) => h.device_id === d.id && h.software_name === sw.software_name).sort((a, b) => b.created_at.localeCompare(a.created_at));
+      const targeted = isTargeted(sw, d);
+      if (!targeted && !hs.length) return null;
+      return {
+        software_id: String(sw.id), software_name: sw.software_name, version: sw.version ?? null, source: sw.source_type, stage: sw.rollout_stage || 'released',
+        targeted, status: hs.some((h) => h.is_successful) ? 'installed' : hs.length ? 'failed' : 'waiting',
+        attempts: hs.length, last_attempt_at: hs[0]?.created_at ?? null, last_history_id: hs[0]?.id ?? null,
+        exit_code: hs[0]?.exit_code ?? null, error_message: hs[0]?.error_message ?? null, not_in_portal: false,
+      };
+    })
+    .filter(Boolean);
+}
+function laptopRow(d, onlyId) {
+  const t = laptopSoftwares(d, onlyId).filter((x) => x.targeted);
+  return {
+    device_id: d.id, serial_number: d.serial_number, username: d.username ?? null, location: d.location ?? null,
+    ngo_name: d.ngo_id != null ? nameOf(ngos, d.ngo_id) : null, donor_name: d.donor_id != null ? nameOf(donors, d.donor_id) : null,
+    rms_version: d.rms_version ?? '1.4.0', is_active: d.is_active !== false, last_seen_at: ago(d.last_seen_days_ago ?? 0.1),
+    targeted: t.length, installed: t.filter((x) => x.status === 'installed').length, failed: t.filter((x) => x.status === 'failed').length,
+    waiting: t.filter((x) => x.status === 'waiting').length,
+    last_install_at: t.map((x) => x.last_attempt_at).filter(Boolean).sort().pop() ?? null,
+  };
+}
+function laptopList(q) {
+  let rows = devices.map((d) => laptopRow(d, q.software_id));
+  if (q.search) {
+    const s = String(q.search).toLowerCase();
+    rows = rows.filter((r) => [r.serial_number, r.username, r.location].some((v) => (v ?? '').toLowerCase().includes(s)));
+  }
+  if (q.ngo_id) rows = rows.filter((r) => String(devices.find((d) => d.id === r.device_id)?.ngo_id) === String(q.ngo_id));
+  if (q.donor_id) rows = rows.filter((r) => String(devices.find((d) => d.id === r.device_id)?.donor_id) === String(q.donor_id));
+  const st = q.status || 'all';
+  rows = rows.filter((r) => ({ all: true, complete: !r.failed && !r.waiting, waiting: r.waiting > 0, failed: r.failed > 0, not_installed: r.failed + r.waiting > 0 })[st]);
+  const sort = q.sort || 'attention';
+  rows.sort(
+    sort === 'serial' ? (a, b) => a.serial_number.localeCompare(b.serial_number)
+      : sort === 'location' ? (a, b) => String(a.location).localeCompare(String(b.location))
+      : sort === 'last_seen' ? (a, b) => String(b.last_seen_at).localeCompare(String(a.last_seen_at))
+      : (a, b) => b.failed - a.failed || b.waiting - a.waiting || a.serial_number.localeCompare(b.serial_number),
+  );
+  const sum = (k) => rows.reduce((a, r) => a + r[k], 0);
+  return {
+    rows,
+    summary: {
+      laptops: rows.length, complete: rows.filter((r) => !r.failed && !r.waiting).length, with_waiting: rows.filter((r) => r.waiting).length,
+      with_failures: rows.filter((r) => r.failed).length, installs: sum('installed'), failed_installs: sum('failed'), waiting_installs: sum('waiting'),
+    },
+  };
+}
+app.get('/api/admin/devices', (req, res) => {
+  const { rows, summary } = laptopList(req.query);
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const size = Math.min(limits.historyMaxPageSize, Number(req.query.page_size) || limits.historyPageSize);
+  res.json({ data: rows.slice((page - 1) * size, page * size), summary, total: rows.length, page, page_size: size });
+});
+app.get('/api/admin/devices/export.csv', (req, res) => {
+  const cols = ['serial_number', 'username', 'location', 'ngo_name', 'donor_name', 'rms_version', 'last_seen_at', 'targeted', 'installed', 'failed', 'waiting'];
+  const lines = [cols.join(','), ...laptopList(req.query).rows.map((r) => cols.map((c) => `"${String(r[c] ?? '').replace(/"/g, '""')}"`).join(','))];
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="rms-laptops-demo.csv"');
+  res.send('\uFEFF' + lines.join('\r\n'));
+});
+app.get('/api/admin/devices/:serial', (req, res) => {
+  const d = devices.find((x) => x.serial_number === req.params.serial);
+  if (!d) return res.status(404).json({ error: 'Laptop not found in RMS' });
+  const softwares = laptopSoftwares(d).sort((a, b) => ({ failed: 0, waiting: 1, installed: 2 })[a.status] - ({ failed: 0, waiting: 1, installed: 2 })[b.status]);
+  res.json({ data: { device: laptopRow(d), softwares, server: { device_targeting: DEVICE_TARGETING, mode: 'env', server_patch: null } } });
+});
+
+app.get('/api/admin/lookups/rms-server', (_req, res) => res.json({ data: { device_targeting: DEVICE_TARGETING, mode: 'env', server_patch: null } }));
 
 app.get('/api/admin/softwares/:id/audit', (req, res) =>
   res.json({ data: audit.filter((a) => String(a.software_id) === String(req.params.id)).slice(0, limits.auditLogLimit) }),

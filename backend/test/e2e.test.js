@@ -12,7 +12,15 @@ import { createHash, randomBytes } from 'node:crypto';
 const API = process.env.API_URL || 'http://localhost:4100';
 let token;
 
+// Every new software must be piloted first (REQUIRE_PILOT): default the pilot to NGO 1 in tests.
+const withPilot = (method, path, body) =>
+  body && ['POST', 'PUT'].includes(method) && /^\/api\/admin\/softwares(\/[^/]+)?$/.test(path) &&
+  !body.pilot_ngos && !body.pilot_donors && !body.release_now
+    ? { pilot_ngos: [1], ...body }
+    : body;
+
 async function api(method, path, body, expect) {
+  body = withPilot(method, path, body);
   const res = await fetch(API + path, {
     method,
     headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
@@ -213,4 +221,21 @@ test('installer defaults expose dynamic limits + exit codes', async () => {
   assert.ok(d.limits.canary_max_devices >= 1);
   assert.ok(d.limits.timeout_max_minutes >= d.limits.timeout_min_minutes);
   assert.ok(d.exit_codes['1603']);
+});
+
+test('pilot -> release rollout', async () => {
+  const c = await api('POST', '/api/admin/softwares', {
+    software_name: `Pilot ${suffix}`, source_type: 'winget', winget_id: 'Mozilla.Firefox', pilot_ngos: [1], is_global: true,
+  }, 201);
+  assert.equal(c.json.data.rollout.stage, 'pilot');
+  assert.equal(c.json.data.live_is_global, false, 'not live for the fleet during the pilot');
+  const st = await api('GET', `/api/admin/softwares/${c.json.data.id}/rollout`, null, 200);
+  assert.ok(st.json.data.gate.total >= 1);
+  await api('POST', `/api/admin/softwares/${c.json.data.id}/rollout/release`, {}, 409); // not passed yet
+  const forced = await api('POST', `/api/admin/softwares/${c.json.data.id}/rollout/release`, { force: true }, 200);
+  assert.equal(forced.json.data.rollout.stage, 'released');
+  assert.equal(forced.json.data.live_is_global, true);
+  const back = await api('POST', `/api/admin/softwares/${c.json.data.id}/rollout/restart-pilot`, null, 200);
+  assert.equal(back.json.data.rollout.stage, 'pilot');
+  await api('POST', '/api/admin/softwares', { software_name: `NoPilot ${suffix}`, source_type: 'winget', winget_id: 'X.Y', pilot_ngos: [], release_now: false, test_device_serials: [] }, 400);
 });

@@ -4,6 +4,7 @@ import { Layout } from './components/Layout';
 import { LoginPage } from './pages/LoginPage';
 import { InventoryPage } from './pages/InventoryPage';
 import { HistoryPage } from './pages/HistoryPage';
+import { LaptopsPage } from './pages/LaptopsPage';
 import { session } from './lib/api';
 
 function RequireAuth({ children }: { children: ReactNode }) {
@@ -22,6 +23,7 @@ export default function App() {
         }
       >
         <Route index element={<InventoryPage />} />
+        <Route path="laptops" element={<LaptopsPage />} />
         <Route path="history" element={<HistoryPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

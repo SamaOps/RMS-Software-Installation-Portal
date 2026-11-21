@@ -17,6 +17,10 @@ CREATE TABLE IF NOT EXISTS devices (
   rms_version VARCHAR(50) DEFAULT '0.0.0', location VARCHAR(255) NOT NULL, isactive BOOLEAN DEFAULT TRUE,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS laptop_tracking (
+  id SERIAL PRIMARY KEY, device_id INT NOT NULL REFERENCES devices(id), total_active_time INT NOT NULL,
+  latitude NUMERIC(9,6), longitude NUMERIC(9,6), location_name VARCHAR(255), timestamp TIMESTAMP NOT NULL
+);
 CREATE TABLE IF NOT EXISTS softwares (
   id SERIAL PRIMARY KEY,
   software_name VARCHAR(255) NOT NULL,

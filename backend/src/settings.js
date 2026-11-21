@@ -88,6 +88,31 @@ export const limits = {
 };
 
 // ---------------------------------------------------------------------------
+// Pilot → release rollouts
+// ---------------------------------------------------------------------------
+const deviceTargeting = String(process.env.RMS_SERVER_DEVICE_TARGETING || 'auto').toLowerCase();
+export const rollout = {
+  // Every new software must pass a pilot before reaching the fleet (admins can't skip it).
+  requirePilot: bool(process.env.REQUIRE_PILOT, true),
+  // Default rule: release automatically when the pilot passes.
+  autoReleaseDefault: bool(process.env.AUTO_RELEASE_DEFAULT, true),
+  // Pilot passes when this many pilot laptops succeed (empty = all pilot laptops)…
+  defaultRequiredSuccesses: process.env.PILOT_DEFAULT_REQUIRED_SUCCESSES ? int('PILOT_DEFAULT_REQUIRED_SUCCESSES', 1, { min: 1 }) : null,
+  // …and no more than this many fail.
+  defaultMaxFailures: int('PILOT_DEFAULT_MAX_FAILURES', 0, { min: 0 }),
+  // Admin may release a failed/incomplete pilot with an explicit "release anyway".
+  allowForceRelease: bool(process.env.ALLOW_FORCE_RELEASE, true),
+  // How often the API checks running pilots (0 = never; evaluate on demand only).
+  checkIntervalSeconds: int('ROLLOUT_CHECK_INTERVAL_SECONDS', 120, { min: 0, max: 86_400 }),
+  // Count the install script's own verdict when the 1.4.0 client's timer recorded a false failure.
+  trustScriptResult: bool(process.env.PILOT_TRUST_SCRIPT_RESULT, true),
+  // Single-laptop (serial) pilots need the optional server patch. auto = detect via heartbeat.
+  deviceTargeting: ['true', 'false'].includes(deviceTargeting) ? deviceTargeting === 'true' : 'auto',
+  heartbeatMaxAgeMinutes: int('RMS_SERVER_HEARTBEAT_MAX_AGE_MINUTES', 1440, { min: 1 }),
+  maxPilotGroups: int('PILOT_MAX_GROUPS', 10, { min: 1, max: 500 }),
+};
+
+// ---------------------------------------------------------------------------
 // Client-compatibility install script ("wrapper") for deployed RMS clients.
 //
 // The RMS 1.4.0 client runs any notInstalled item whose winget_id is an
@@ -173,6 +198,7 @@ export function uiSettings(extra = {}) {
     detection_types: presets.detection_types,
     exit_codes: presets.exit_codes,
     error_patterns: presets.error_patterns,
+    installer_detection: presets.installer_detection ?? null,
     default_success_exit_codes: defaultSuccessExitCodes,
     allowed_extensions: allowedExtensions,
     max_upload_bytes: limits.maxUploadBytes,
@@ -193,6 +219,14 @@ export function uiSettings(extra = {}) {
       hash_chunk_bytes: limits.hashChunkBytes,
       analytics_daily_days: limits.analyticsDailyDays,
       analytics_error_window_days: limits.analyticsErrorWindowDays,
+    },
+    rollout: {
+      require_pilot: rollout.requirePilot,
+      auto_release_default: rollout.autoReleaseDefault,
+      default_required_successes: rollout.defaultRequiredSuccesses,
+      default_max_failures: rollout.defaultMaxFailures,
+      allow_force_release: rollout.allowForceRelease,
+      max_pilot_groups: rollout.maxPilotGroups,
     },
     ...extra,
   };

@@ -21,7 +21,26 @@
 import { createHash } from 'node:crypto';
 import { wrapper, defaultSuccessExitCodes, limits, presets } from '../settings.js';
 
-export const WRAPPER_VERSION = '1';
+export const WRAPPER_VERSION = '2';
+
+/**
+ * Silent args with the install location applied, using the type's `installDirArg` template from
+ * the presets file (e.g. Inno /DIR="{path}", NSIS /D={path}, MSI INSTALLDIR="{path}").
+ * Skipped when the admin already put that switch in the args. NSIS requires /D= to be last.
+ */
+export function effectiveSilentArgs(sw, installerType) {
+  let raw = sw.silent_args;
+  if (typeof raw === 'object' && raw !== null) {
+    raw = raw.args !== undefined ? raw.args : (Object.keys(raw).length === 0 ? '' : JSON.stringify(raw));
+  }
+  const args = (raw ?? '').trim();
+  const path = (sw.target_install_path ?? '').trim();
+  const tpl = presets.installer_types?.[installerType]?.installDirArg;
+  if (!path || !tpl || installerType === 'Portable' || installerType === 'portable') return args;
+  const key = tpl.split('{path}')[0].replace(/"$/, '').toLowerCase(); // "/dir=", "/d=", "installdir="
+  if (args.toLowerCase().split(/\s+/).some((a) => a.startsWith(key))) return args;
+  return `${args} ${tpl.replace('{path}', path)}`.trim();
+}
 
 /** PowerShell single-quoted literal. Smart quotes are also quote chars in PowerShell, so double them too. */
 export function psLit(v) {
@@ -84,7 +103,7 @@ export function generateWrapper(sw, { publicDownloadBaseUrl }) {
     ['Sha256', psLit((sw.sha256_checksum || '').toLowerCase())],
     ['SizeBytes', sw.file_size_bytes ? psInt(sw.file_size_bytes, 0) : '0'],
     ['InstallerType', psLit(installerType)],
-    ['SilentArgs', psLit(sw.silent_args ?? '')],
+    ['SilentArgs', psLit(effectiveSilentArgs(sw, installerType))],
     ['Context', psLit(sw.execution_context || 'SYSTEM')],
     ['TargetPath', psLit(sw.target_install_path ?? '')],
     ['Shortcut', psBool(sw.create_desktop_shortcut !== false)],
@@ -92,6 +111,9 @@ export function generateWrapper(sw, { publicDownloadBaseUrl }) {
     ['DetectionType', psLit(sw.detection_type || 'exit_code_zero')],
     ['DetectionPath', psLit(sw.detection_path ?? '')],
     ['SuccessCodes', `@(${successCodes.join(',')})`],
+    ['PreInstallScript', psLit(sw.pre_install_script ?? '')],
+    ['PostInstallScript', psLit(sw.post_install_script ?? '')],
+    ['ProcessNameToWait', psLit(sw.process_name_to_wait ?? '')],
     ['MutexName', psLit(wrapper.mutexName)],
     ['MutexWaitMinutes', psInt(wrapper.mutexWaitMinutes, 20)],
     ['DownloadRetries', psInt(wrapper.downloadRetries, 3)],
@@ -302,6 +324,8 @@ function Add-LogTail([string]$Path, [string]$Title) {
 try {
   Write-Log ('RMS portal install: ' + $Cfg.SoftwareName + ' ' + $Cfg.Version + ' | type ' + $Cfg.InstallerType + ' | context ' + $Cfg.Context + ' | timeout ' + $Cfg.TimeoutMinutes + ' min')
   Write-Log ('Running as ' + [Security.Principal.WindowsIdentity]::GetCurrent().Name)
+  # Installers are started without a shell, so expand %ProgramFiles% etc. here.
+  $Cfg.SilentArgs = [Environment]::ExpandEnvironmentVariables([string]$Cfg.SilentArgs)
 
   # One install at a time on this machine (all RMS tasks start in the same minute).
   $script:Mutex = New-Object System.Threading.Mutex($false, $Cfg.MutexName)
@@ -349,6 +373,16 @@ try {
   }
   Unblock-File -LiteralPath $file -ErrorAction SilentlyContinue
 
+  if ($Cfg.PreInstallScript) {
+    Write-Log 'Executing pre-install script...'
+    try {
+      Invoke-Command -ScriptBlock ([scriptblock]::Create($Cfg.PreInstallScript))
+      Write-Log 'Pre-install script completed.'
+    } catch {
+      Write-Log ('Pre-install script notice: ' + $_.Exception.Message)
+    }
+  }
+
   $ext = [IO.Path]::GetExtension($file).TrimStart('.').ToLowerInvariant()
   $code = 0
 
@@ -392,6 +426,21 @@ try {
     if ($Cfg.InstallerType -eq 'InnoSetup' -and $argLine -notmatch '/LOG') { $argLine = ($argLine + ' /LOG="' + $innoLog + '"').Trim() }
     $code = Invoke-Installer $file $argLine
     Add-LogTail $innoLog 'Inno Setup log'
+  }
+
+  if ($Cfg.ProcessNameToWait) {
+    Write-Log ('Waiting for process: ' + $Cfg.ProcessNameToWait)
+    $procName = $Cfg.ProcessNameToWait -replace '\.exe$', ''
+    Wait-Process -Name $procName -Timeout 60 -ErrorAction SilentlyContinue
+  }
+  if ($Cfg.PostInstallScript) {
+    Write-Log 'Executing post-install script...'
+    try {
+      Invoke-Command -ScriptBlock ([scriptblock]::Create($Cfg.PostInstallScript))
+      Write-Log 'Post-install script completed.'
+    } catch {
+      Write-Log ('Post-install script notice: ' + $_.Exception.Message)
+    }
   }
 
   Write-Log ('Exit code: ' + $code)

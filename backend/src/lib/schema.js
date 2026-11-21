@@ -18,11 +18,18 @@ export const schema = {
   deviceUser: false,
   deviceLocation: false,
   deviceActive: false,
+  deviceVersion: false,
+  lastSeen: false,
   deviceNgoFk: false,
   deviceDonorFk: false,
   migrated: false,
   migrated002: false,
   migrated003: false,
+  migrated004: false,
+  isSilentArgsJsonb: false,
+  hasRunAs: false,
+  hasTimeoutSeconds: false,
+  hasScripts: false,
 };
 
 async function columns(table) {
@@ -35,11 +42,12 @@ async function columns(table) {
 }
 
 export async function introspect() {
-  const [donors, ngos, devices, softwares] = await Promise.all([
+  const [donors, ngos, devices, softwares, seen] = await Promise.all([
     columns(t.donors),
     columns(t.ngos),
     columns(t.devices),
     columns('softwares'),
+    columns(t.lastSeenTable),
   ]);
 
   if (!softwares) throw new Error('Table "softwares" not found. Is DATABASE_URL pointing at the RMS database?');
@@ -49,6 +57,17 @@ export async function introspect() {
   if (!schema.migrated002) throw new Error('Migration 002 has not been applied. Run: npm run migrate');
   schema.migrated003 = softwares.has('client_script_url');
   if (!schema.migrated003) throw new Error('Migration 003 has not been applied. Run: npm run migrate');
+  schema.migrated004 = softwares.has('rollout_stage');
+  if (!schema.migrated004) throw new Error('Migration 004 has not been applied. Run: npm run migrate');
+
+  const softwareColInfo = await query(
+    `SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'softwares'`
+  );
+  const typesMap = new Map(softwareColInfo.rows.map((r) => [r.column_name, r.data_type]));
+  schema.isSilentArgsJsonb = typesMap.get('silent_args') === 'jsonb';
+  schema.hasRunAs = softwares.has('run_as');
+  schema.hasTimeoutSeconds = softwares.has('timeout_seconds');
+  schema.hasScripts = softwares.has('pre_install_script');
 
   const has = (set, col) => !!col && !!set?.has(col);
   schema.donors = !!donors?.has('id') && has(donors, t.donorName);
@@ -58,6 +77,8 @@ export async function introspect() {
   schema.deviceUser = schema.devices && has(devices, t.deviceUser);
   schema.deviceLocation = schema.devices && has(devices, t.deviceLocation);
   schema.deviceActive = schema.devices && has(devices, t.deviceActive);
+  schema.deviceVersion = schema.devices && has(devices, t.deviceVersion);
+  schema.lastSeen = schema.devices && has(seen, t.lastSeenDeviceFk) && has(seen, t.lastSeenTime);
   schema.deviceNgoFk = schema.devices && schema.ngos && has(devices, t.deviceNgoFk);
   schema.deviceDonorFk = schema.devices && schema.donors && has(devices, t.deviceDonorFk);
 
@@ -97,6 +118,16 @@ export function reportJoinSql(before, after) {
                              AND si.created_at + make_interval(mins => ${Number(after)})
       ORDER BY abs(extract(epoch FROM (r.created_at - si.created_at))) LIMIT 1
     ) rep ON TRUE`;
+}
+
+/** SQL fragment: JSON array of {id,name} portal targets (stage 'pilot'|'release') for softwares alias `s`. */
+export function targetNamesSql(kind, stage) {
+  const ok = kind === 'donor' ? schema.donors : schema.ngos;
+  const table = kind === 'donor' ? t.donors : t.ngos;
+  const name = kind === 'donor' ? t.donorName : t.ngoName;
+  const nameExpr = ok ? `COALESCE((SELECT x.${q(name)} FROM ${q(table)} x WHERE x.id::text = st.ref_id LIMIT 1), st.ref_id)` : 'st.ref_id';
+  return `(SELECT COALESCE(json_agg(json_build_object('id', st.ref_id, 'name', ${nameExpr}) ORDER BY st.ref_id), '[]'::json)
+           FROM software_targets st WHERE st.software_id = s.id AND st.stage = '${stage}' AND st.kind = '${kind}')`;
 }
 
 /** SQL fragment: JSON array of {id,name} donors/ngos assigned to softwares row alias `s`. */
