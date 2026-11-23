@@ -31,7 +31,15 @@ export const WRAPPER_VERSION = '2';
 export function effectiveSilentArgs(sw, installerType) {
   let raw = sw.silent_args;
   if (typeof raw === 'object' && raw !== null) {
-    raw = raw.args !== undefined ? raw.args : (Object.keys(raw).length === 0 ? '' : JSON.stringify(raw));
+    if (Array.isArray(raw)) {
+      raw = raw.join(' ');
+    } else if (Array.isArray(raw.switches)) {
+      raw = raw.switches.join(' ');
+    } else if (raw.args !== undefined) {
+      raw = raw.args;
+    } else {
+      raw = Object.keys(raw).length === 0 ? '' : JSON.stringify(raw);
+    }
   }
   const args = (raw ?? '').trim();
   const path = (sw.target_install_path ?? '').trim();

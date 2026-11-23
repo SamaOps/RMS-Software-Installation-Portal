@@ -69,7 +69,7 @@ export const softwareInput = z
       .nullable(),
     execution_context: z.enum(EXECUTION_CONTEXTS).default('SYSTEM'),
     run_as: z.enum(['system', 'user']).optional(),
-    elevation: z.enum(['highest', 'none']).optional(),
+    elevation: z.enum(['highest', 'limited', 'none']).optional(),
     pre_install_script: z.string().max(10000).optional().nullable(),
     post_install_script: z.string().max(10000).optional().nullable(),
     custom_install_script: z.string().max(10000).optional().nullable(),
@@ -180,7 +180,7 @@ export const softwareInput = z
   .transform((d) => {
     const isPortable = d.installer_type === 'Portable' || d.installer_type === 'portable' || d.is_portable === true;
     const runAs = d.run_as || (d.execution_context === 'LOGGED_IN_USER' ? 'user' : 'system');
-    const elevation = d.elevation || (d.execution_context === 'LOGGED_IN_USER' ? 'none' : 'highest');
+    const elevation = d.elevation ? (d.elevation === 'none' ? 'limited' : d.elevation) : (d.execution_context === 'LOGGED_IN_USER' ? 'limited' : 'highest');
     const timeoutSeconds = d.timeout_seconds || (d.timeout_minutes * 60) || 600;
     const fileName =
       d.source_type === 'external_url'

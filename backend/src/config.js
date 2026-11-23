@@ -101,6 +101,13 @@ export const config = {
     deviceDonorFk: ident('DEVICES_DONOR_FK_COLUMN', 'donor_id'),
   },
   allowHttpExternalUrls: bool(process.env.ALLOW_HTTP_EXTERNAL_URLS, true),
+  // windows-rms-server software management REST API integration
+  rmsServer: {
+    apiUrl: (process.env.RMS_SERVER_API_URL || process.env.RMS_SERVER_URL || '').replace(/\/+$/, ''),
+    apiKey: process.env.RMS_SERVER_API_KEY || process.env.API_KEY || '',
+    authEnabled: bool(process.env.RMS_SERVER_AUTH_ENABLED ?? process.env.AUTH_ENABLED ?? false),
+    timeoutMs: Number(process.env.RMS_SERVER_TIMEOUT_MS || 10000),
+  },
   limits,
 };
 

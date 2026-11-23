@@ -78,7 +78,7 @@ interface Form {
   silent_args: string;
   execution_context: 'SYSTEM' | 'LOGGED_IN_USER';
   run_as: 'system' | 'user';
-  elevation: 'highest' | 'none';
+  elevation: 'highest' | 'limited';
   pre_install_script: string;
   post_install_script: string;
   process_name_to_wait: string;
@@ -130,7 +130,7 @@ function fromSoftware(s: Software, l: L): Form {
     silent_args: s.silent_args ?? '',
     execution_context: s.execution_context,
     run_as: s.run_as ?? (s.execution_context === 'LOGGED_IN_USER' ? 'user' : 'system'),
-    elevation: s.elevation ?? (s.execution_context === 'LOGGED_IN_USER' ? 'none' : 'highest'),
+    elevation: s.elevation ?? (s.execution_context === 'LOGGED_IN_USER' ? 'limited' : 'highest'),
     pre_install_script: s.pre_install_script ?? '',
     post_install_script: s.post_install_script ?? '',
     process_name_to_wait: s.process_name_to_wait ?? '',
@@ -779,7 +779,7 @@ export function SoftwareWizard({
                   onClick={() => {
                     set('execution_context', o.v);
                     set('run_as', o.v === 'LOGGED_IN_USER' ? 'user' : 'system');
-                    set('elevation', o.v === 'LOGGED_IN_USER' ? 'none' : 'highest');
+                    set('elevation', o.v === 'LOGGED_IN_USER' ? 'limited' : 'highest');
                   }}
                   className={clsx(
                     'flex items-start gap-3 rounded-xl border p-3 text-left transition',

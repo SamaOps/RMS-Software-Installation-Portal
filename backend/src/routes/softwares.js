@@ -14,6 +14,7 @@ import { limits, wrapper, rollout as R } from '../settings.js';
 import { publishClientScript, buildForRow } from '../lib/clientScripts.js';
 import { needsWrapper } from '../lib/wrapperScript.js';
 import { headObject, keyFor, sha256OfObject, publicUrlFor } from '../storage/index.js';
+import { rmsServerClient, toServerInstallerType, toServerSilentArgs } from '../lib/rmsServerClient.js';
 
 const r = Router();
 const t = config.tables;
@@ -66,7 +67,15 @@ function toApi(row) {
   const wrapped = !!row.client_script_url && row.winget_id === row.client_script_url;
   let silentArgs = row.silent_args;
   if (typeof silentArgs === 'object' && silentArgs !== null) {
-    silentArgs = silentArgs.args !== undefined ? silentArgs.args : (Object.keys(silentArgs).length === 0 ? '' : JSON.stringify(silentArgs));
+    if (Array.isArray(silentArgs.switches)) {
+      silentArgs = silentArgs.switches.join(' ');
+    } else if (Array.isArray(silentArgs)) {
+      silentArgs = silentArgs.join(' ');
+    } else if (silentArgs.args !== undefined) {
+      silentArgs = silentArgs.args;
+    } else {
+      silentArgs = Object.keys(silentArgs).length === 0 ? '' : JSON.stringify(silentArgs);
+    }
   }
   return {
     id: row.id,
@@ -91,7 +100,7 @@ function toApi(row) {
     silent_args: silentArgs,
     execution_context: row.execution_context || (row.run_as === 'user' ? 'LOGGED_IN_USER' : 'SYSTEM'),
     run_as: row.run_as || (row.execution_context === 'LOGGED_IN_USER' ? 'user' : 'system'),
-    elevation: row.elevation || (row.execution_context === 'LOGGED_IN_USER' ? 'none' : 'highest'),
+    elevation: row.elevation || (row.execution_context === 'LOGGED_IN_USER' ? 'limited' : 'highest'),
     pre_install_script: row.pre_install_script ?? null,
     post_install_script: row.post_install_script ?? null,
     custom_install_script: row.custom_install_script ?? null,
@@ -241,7 +250,7 @@ function getSoftwareColumns() {
 function getSoftwareValues(d, cols) {
   let silentArgsVal = d.silent_args;
   if (schema.isSilentArgsJsonb) {
-    silentArgsVal = JSON.stringify(typeof d.silent_args === 'object' && d.silent_args !== null ? d.silent_args : { args: d.silent_args || '' });
+    silentArgsVal = JSON.stringify(toServerSilentArgs(d.silent_args));
   }
   const mapping = {
     software_name: d.software_name,
@@ -255,7 +264,7 @@ function getSoftwareValues(d, cols) {
     file_url: d.file_url,
     file_size_bytes: d.file_size_bytes,
     sha256_checksum: d.sha256_checksum,
-    installer_type: d.installer_type ?? null,
+    installer_type: toServerInstallerType(d.installer_type),
     silent_args: silentArgsVal,
     execution_context: d.execution_context,
     is_portable: d.is_portable,
@@ -273,7 +282,7 @@ function getSoftwareValues(d, cols) {
     auto_release: d.auto_release,
     replaces_software_id: d.replaces_software_id,
     run_as: d.run_as ?? (d.execution_context === 'LOGGED_IN_USER' ? 'user' : 'system'),
-    elevation: d.elevation ?? (d.execution_context === 'LOGGED_IN_USER' ? 'none' : 'highest'),
+    elevation: d.elevation ? (d.elevation === 'none' ? 'limited' : d.elevation) : (d.execution_context === 'LOGGED_IN_USER' ? 'limited' : 'highest'),
     pre_install_script: d.pre_install_script ?? null,
     post_install_script: d.post_install_script ?? null,
     custom_install_script: d.custom_install_script ?? null,
@@ -356,15 +365,32 @@ r.post(
       throw fieldError('test_device_serials', 'Choose pilot laptops (serials) or a pilot NGO/donor group to test on first');
     const created = await tx(async (db) => {
       await validateAgainstDb(db, d);
-      const baseCols = getSoftwareColumns();
-      const cols = [...baseCols, 'created_by', 'created_at', 'updated_at'];
-      const vals = [...getSoftwareValues(d, baseCols), req.user.username];
-      const placeholders = vals.map((_, i) => `$${i + 1}`).join(', ');
-      const ins = await db.query(
-        `INSERT INTO softwares (${cols.join(', ')}) VALUES (${placeholders}, NOW(), NOW()) RETURNING id`,
-        vals,
-      );
-      const id = ins.rows[0].id;
+      let id;
+      if (rmsServerClient.isEnabled()) {
+        try {
+          const remote = await rmsServerClient.createSoftware(d);
+          id = remote?.id;
+        } catch (apiErr) {
+          console.warn('[RMS-Server API] Direct API create failed or rejected, falling back to direct DB insert:', apiErr.message);
+        }
+      }
+      if (!id) {
+        const baseCols = getSoftwareColumns();
+        const cols = [...baseCols, 'created_by', 'created_at', 'updated_at'];
+        const vals = [...getSoftwareValues(d, baseCols), req.user.username];
+        const placeholders = vals.map((_, i) => `$${i + 1}`).join(', ');
+        const ins = await db.query(
+          `INSERT INTO softwares (${cols.join(', ')}) VALUES (${placeholders}, NOW(), NOW()) RETURNING id`,
+          vals,
+        );
+        id = ins.rows[0].id;
+      } else {
+        // Sync portal-specific rollout columns on the API-created record
+        await db.query(
+          `UPDATE softwares SET rollout_stage = $1, auto_release = $2, replaces_software_id = $3, created_by = $4, updated_at = NOW() WHERE id = $5`,
+          [d.release_now ? 'released' : 'pilot', d.auto_release !== false, d.replaces_software_id || null, req.user.username, id]
+        );
+      }
       await saveTargets(db, id, d);
       const script = await publishClientScript(db, id); // before going live: laptops must get the script, not the raw file
       if (d.release_now) await releaseNow(db, id, req.user.username, null);
@@ -404,6 +430,13 @@ r.put(
       }
 
       await validateAgainstDb(db, d, id);
+      if (rmsServerClient.isEnabled()) {
+        try {
+          await rmsServerClient.updateSoftware(id, d);
+        } catch (apiErr) {
+          console.warn('[RMS-Server API] Direct API update failed, continuing DB update:', apiErr.message);
+        }
+      }
       const cols = getSoftwareColumns();
       const sets = cols.map((c, i) => `${c} = $${i + 1}`).join(', ');
       const vals = getSoftwareValues(d, cols);
@@ -591,6 +624,13 @@ r.post(
 r.delete(
   '/:id',
   ah(async (req, res) => {
+    if (rmsServerClient.isEnabled()) {
+      try {
+        await rmsServerClient.deleteSoftware(req.params.id);
+      } catch (apiErr) {
+        console.warn('[RMS-Server API] Direct API delete failed, continuing DB soft-delete:', apiErr.message);
+      }
+    }
     const u = await query(
       `UPDATE softwares SET isactive = FALSE, deleted_at = NOW(), updated_at = NOW()
        WHERE id::text = $1 AND deleted_at IS NULL RETURNING id`,

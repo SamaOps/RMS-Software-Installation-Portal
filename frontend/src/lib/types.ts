@@ -42,7 +42,7 @@ export interface Software {
   silent_args: string | null;
   execution_context: ExecutionContext;
   run_as?: 'system' | 'user';
-  elevation?: 'highest' | 'none';
+  elevation?: 'highest' | 'limited';
   pre_install_script?: string | null;
   post_install_script?: string | null;
   custom_install_script?: string | null;
@@ -150,7 +150,7 @@ export interface SoftwarePayload {
   silent_args?: string | null;
   execution_context: ExecutionContext;
   run_as?: 'system' | 'user';
-  elevation?: 'highest' | 'none';
+  elevation?: 'highest' | 'limited';
   pre_install_script?: string | null;
   post_install_script?: string | null;
   custom_install_script?: string | null;
